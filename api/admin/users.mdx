@@ -1,0 +1,522 @@
+---
+title: "Admin Users"
+description: "Create, list, update, lock, and reset passwords for users across the platform. Requires UserAdminAccess policy."
+---
+
+<Warning>
+  All endpoints on this page require the `UserAdminAccess` authorization policy.
+  This feature is also gated behind the `Features:UserAdmin` feature flag.
+  A valid token without sufficient permissions returns `403 Forbidden`.
+</Warning>
+
+All user management routes are under:
+
+```
+/api/v1/admin/users
+```
+
+---
+
+## AdminUserDto — common response shape
+
+Most endpoints return an `AdminUserDto`:
+
+<ResponseField name="id" type="string">Identity provider user ID.</ResponseField>
+<ResponseField name="email" type="string">User's email address.</ResponseField>
+<ResponseField name="userName" type="string">User's login username.</ResponseField>
+<ResponseField name="roles" type="string[]">List of role names assigned to the user.</ResponseField>
+<ResponseField name="isLockedOut" type="boolean">`true` when the user's account is locked.</ResponseField>
+<ResponseField name="lockoutEnd" type="string (ISO 8601) | null">When the lockout expires (`null` if not locked or permanent).</ResponseField>
+<ResponseField name="tenantId" type="string (uuid) | null">The tenant this user belongs to, or `null` for platform-level users.</ResponseField>
+<ResponseField name="storeId" type="string (uuid) | null">The specific store the user is scoped to, or `null` if not store-scoped.</ResponseField>
+
+---
+
+## Create user
+
+```
+POST /api/v1/admin/users
+```
+
+Creates a new user and assigns an initial role. The action is audit-logged.
+
+### Request body
+
+<ParamField body="email" type="string" required>
+  Valid email address for the new user. Must be unique.
+</ParamField>
+
+<ParamField body="userName" type="string" required>
+  Login username for the new user.
+</ParamField>
+
+<ParamField body="role" type="string" required>
+  Initial role to assign. Must be an existing role name (see [Roles](/api/admin/roles)).
+</ParamField>
+
+<ParamField body="tenantId" type="string (uuid)">
+  UUID of the tenant to associate the user with. Omit for platform-level (SuperAdmin) users.
+</ParamField>
+
+<ParamField body="storeId" type="string (uuid)">
+  UUID of the store to scope the user to. Only relevant for store-scoped roles.
+</ParamField>
+
+<ParamField body="temporaryPassword" type="string" required>
+  Initial password the user must change on first login. Minimum 8 characters.
+</ParamField>
+
+### Response `201 Created`
+
+Returns the newly created user. The `Location` header points to the user detail endpoint.
+
+<ResponseField name="id" type="string">New user's identity provider ID.</ResponseField>
+<ResponseField name="email" type="string">User's email.</ResponseField>
+<ResponseField name="userName" type="string">User's username.</ResponseField>
+<ResponseField name="roles" type="string[]">Assigned roles (contains the initial `role` value).</ResponseField>
+<ResponseField name="tenantId" type="string (uuid) | null">Assigned tenant.</ResponseField>
+<ResponseField name="storeId" type="string (uuid) | null">Assigned store.</ResponseField>
+<ResponseField name="isLockedOut" type="boolean">Always `false` on creation.</ResponseField>
+
+### Status codes
+
+| Code | Description |
+|------|-------------|
+| `201` | User created successfully. |
+| `400` | Validation error (invalid email, weak password, missing fields). |
+| `401` | Missing or invalid token. |
+| `403` | Caller lacks `UserAdminAccess`. |
+| `409` | Email or username already exists. |
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X POST https://api.cobranzadigital.com/api/v1/admin/users \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "maria.lopez@restaurantenorte.mx",
+    "userName": "maria.lopez",
+    "role": "AdminStore",
+    "tenantId": "11111111-0000-0000-0000-000000000001",
+    "storeId": "22222222-0000-0000-0000-000000000001",
+    "temporaryPassword": "Temporal@2026!"
+  }'
+```
+
+```json Response
+{
+  "id": "auth0|abc123xyz",
+  "email": "maria.lopez@restaurantenorte.mx",
+  "userName": "maria.lopez",
+  "roles": ["AdminStore"],
+  "tenantId": "11111111-0000-0000-0000-000000000001",
+  "storeId": "22222222-0000-0000-0000-000000000001",
+  "isLockedOut": false
+}
+```
+</CodeGroup>
+
+---
+
+## List users
+
+```
+GET /api/v1/admin/users
+```
+
+Returns a paginated list of users, optionally filtered by search term, tenant, or store.
+
+### Query parameters
+
+<ParamField query="search" type="string">
+  Full-text search against email and username.
+</ParamField>
+
+<ParamField query="page" type="integer" default="1">
+  Page number (1-indexed). Must be greater than `0`.
+</ParamField>
+
+<ParamField query="pageSize" type="integer" default="20">
+  Number of users per page. Must be greater than `0`.
+</ParamField>
+
+<ParamField query="tenantId" type="string (uuid)">
+  Filter results to users belonging to this tenant.
+</ParamField>
+
+<ParamField query="storeId" type="string (uuid)">
+  Filter results to users scoped to this store.
+</ParamField>
+
+<Note>
+  The legacy `pageNumber` query parameter is also accepted as an alias for `page`.
+  Prefer `page` in new integrations.
+</Note>
+
+### Response `200 OK`
+
+<ResponseField name="total" type="integer">
+  Total number of users matching the filter (before pagination).
+</ResponseField>
+
+<ResponseField name="items" type="array">
+  Page of `AdminUserDto` objects (see [common response shape](#adminuserdto--common-response-shape)).
+</ResponseField>
+
+### Status codes
+
+| Code | Description |
+|------|-------------|
+| `200` | Success. |
+| `400` | `page` or `pageSize` is `≤ 0`. |
+| `401` | Missing or invalid token. |
+| `403` | Caller lacks `UserAdminAccess`. |
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X GET "https://api.cobranzadigital.com/api/v1/admin/users?search=lopez&page=1&pageSize=10" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```json Response
+{
+  "total": 1,
+  "items": [
+    {
+      "id": "auth0|abc123xyz",
+      "email": "maria.lopez@restaurantenorte.mx",
+      "userName": "maria.lopez",
+      "roles": ["AdminStore"],
+      "isLockedOut": false,
+      "lockoutEnd": null,
+      "tenantId": "11111111-0000-0000-0000-000000000001",
+      "storeId": "22222222-0000-0000-0000-000000000001"
+    }
+  ]
+}
+```
+</CodeGroup>
+
+---
+
+## Get user by ID
+
+```
+GET /api/v1/admin/users/{id}
+```
+
+### Path parameters
+
+<ParamField path="id" type="string" required>
+  The identity provider user ID (e.g. `auth0|abc123xyz`).
+</ParamField>
+
+### Response `200 OK`
+
+Returns a single `AdminUserDto` (see [common response shape](#adminuserdto--common-response-shape)).
+
+### Status codes
+
+| Code | Description |
+|------|-------------|
+| `200` | User found. |
+| `401` | Missing or invalid token. |
+| `403` | Caller lacks `UserAdminAccess`. |
+| `404` | User not found. |
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X GET https://api.cobranzadigital.com/api/v1/admin/users/auth0%7Cabc123xyz \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```json Response
+{
+  "id": "auth0|abc123xyz",
+  "email": "maria.lopez@restaurantenorte.mx",
+  "userName": "maria.lopez",
+  "roles": ["AdminStore"],
+  "isLockedOut": false,
+  "lockoutEnd": null,
+  "tenantId": "11111111-0000-0000-0000-000000000001",
+  "storeId": "22222222-0000-0000-0000-000000000001"
+}
+```
+</CodeGroup>
+
+---
+
+## Update user
+
+```
+PUT /api/v1/admin/users/{id}
+```
+
+Updates a user's `userName`, `tenantId`, and `storeId`. Role changes require the dedicated [Replace roles](#replace-user-roles) endpoint. The action is audit-logged.
+
+### Path parameters
+
+<ParamField path="id" type="string" required>
+  Identity provider user ID.
+</ParamField>
+
+### Request body
+
+<ParamField body="userName" type="string" required>
+  New username for the user.
+</ParamField>
+
+<ParamField body="tenantId" type="string (uuid)">
+  Reassign the user to a different tenant. Set to `null` to remove tenant association.
+</ParamField>
+
+<ParamField body="storeId" type="string (uuid)">
+  Reassign the user to a different store. Set to `null` to remove store scope.
+</ParamField>
+
+### Response `200 OK`
+
+Returns the updated `AdminUserDto`.
+
+### Status codes
+
+| Code | Description |
+|------|-------------|
+| `200` | Update successful. |
+| `400` | Validation error. |
+| `401` | Missing or invalid token. |
+| `403` | Caller lacks `UserAdminAccess`. |
+| `404` | User not found. |
+| `409` | Username already taken by another user. |
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X PUT https://api.cobranzadigital.com/api/v1/admin/users/auth0%7Cabc123xyz \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userName": "maria.lopez.norte",
+    "tenantId": "11111111-0000-0000-0000-000000000001",
+    "storeId": "22222222-0000-0000-0000-000000000002"
+  }'
+```
+
+```json Response
+{
+  "id": "auth0|abc123xyz",
+  "email": "maria.lopez@restaurantenorte.mx",
+  "userName": "maria.lopez.norte",
+  "roles": ["AdminStore"],
+  "isLockedOut": false,
+  "lockoutEnd": null,
+  "tenantId": "11111111-0000-0000-0000-000000000001",
+  "storeId": "22222222-0000-0000-0000-000000000002"
+}
+```
+</CodeGroup>
+
+---
+
+## Replace user roles
+
+```
+PUT /api/v1/admin/users/{id}/roles
+```
+
+Replaces all current roles assigned to a user with the provided list. The list must contain at least one role.
+
+<Warning>
+  This is a **replace** operation, not an append. All existing roles are removed
+  and replaced with the roles in the request body.
+</Warning>
+
+### Path parameters
+
+<ParamField path="id" type="string" required>
+  Identity provider user ID.
+</ParamField>
+
+### Request body
+
+<ParamField body="roles" type="string[]" required>
+  Array of role names to assign. Must not be empty. Each role must already exist in the system.
+</ParamField>
+
+### Response `200 OK`
+
+Returns the updated `AdminUserDto` with the new role list.
+
+### Status codes
+
+| Code | Description |
+|------|-------------|
+| `200` | Roles replaced successfully. |
+| `400` | `roles` array is empty or contains invalid role names. |
+| `401` | Missing or invalid token. |
+| `403` | Caller lacks `UserAdminAccess`. |
+| `404` | User not found. |
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X PUT https://api.cobranzadigital.com/api/v1/admin/users/auth0%7Cabc123xyz/roles \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "roles": ["PosOperator"]
+  }'
+```
+
+```json Response
+{
+  "id": "auth0|abc123xyz",
+  "email": "maria.lopez@restaurantenorte.mx",
+  "userName": "maria.lopez.norte",
+  "roles": ["PosOperator"],
+  "isLockedOut": false,
+  "lockoutEnd": null,
+  "tenantId": "11111111-0000-0000-0000-000000000001",
+  "storeId": "22222222-0000-0000-0000-000000000002"
+}
+```
+</CodeGroup>
+
+---
+
+## Lock or unlock user
+
+```
+POST /api/v1/admin/users/{id}/lock
+```
+
+Locks or unlocks a user account. The action is audit-logged as `LockUser` or `UnlockUser`. A compatibility alias `PUT /api/v1/admin/users/{id}/lock` is also accepted.
+
+### Path parameters
+
+<ParamField path="id" type="string" required>
+  Identity provider user ID.
+</ParamField>
+
+### Request body
+
+<ParamField body="lock" type="boolean" required>
+  Set to `true` to lock the account, `false` to unlock it.
+</ParamField>
+
+### Response `200 OK`
+
+Returns the updated `AdminUserDto`.
+
+### Status codes
+
+| Code | Description |
+|------|-------------|
+| `200` | Lock state updated. |
+| `401` | Missing or invalid token. |
+| `403` | Caller lacks `UserAdminAccess`. |
+| `404` | User not found. |
+
+### Example
+
+<CodeGroup>
+```bash curl — lock
+curl -X POST https://api.cobranzadigital.com/api/v1/admin/users/auth0%7Cabc123xyz/lock \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"lock": true}'
+```
+
+```bash curl — unlock
+curl -X POST https://api.cobranzadigital.com/api/v1/admin/users/auth0%7Cabc123xyz/lock \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"lock": false}'
+```
+
+```json Response
+{
+  "id": "auth0|abc123xyz",
+  "email": "maria.lopez@restaurantenorte.mx",
+  "userName": "maria.lopez.norte",
+  "roles": ["PosOperator"],
+  "isLockedOut": true,
+  "lockoutEnd": null,
+  "tenantId": "11111111-0000-0000-0000-000000000001",
+  "storeId": "22222222-0000-0000-0000-000000000002"
+}
+```
+</CodeGroup>
+
+---
+
+## Set temporary password
+
+```
+POST /api/v1/admin/users/{id}/temporary-password
+```
+
+Sets a new temporary password for a user. The user will be required to change it on their next login. The action is audit-logged as `ResetUserPassword`.
+
+### Path parameters
+
+<ParamField path="id" type="string" required>
+  Identity provider user ID.
+</ParamField>
+
+### Request body
+
+<ParamField body="temporaryPassword" type="string" required>
+  New temporary password. Minimum 8 characters.
+</ParamField>
+
+### Response `200 OK`
+
+<ResponseField name="id" type="string">User's identity provider ID.</ResponseField>
+<ResponseField name="email" type="string">User's email.</ResponseField>
+<ResponseField name="userName" type="string">User's username.</ResponseField>
+<ResponseField name="roles" type="string[]">User's current roles.</ResponseField>
+<ResponseField name="tenantId" type="string (uuid) | null">User's tenant.</ResponseField>
+<ResponseField name="storeId" type="string (uuid) | null">User's store scope.</ResponseField>
+<ResponseField name="message" type="string">Confirmation message, e.g. `"Temporary password set successfully."`</ResponseField>
+
+### Status codes
+
+| Code | Description |
+|------|-------------|
+| `200` | Temporary password set. |
+| `400` | Password too short or does not meet complexity requirements. |
+| `401` | Missing or invalid token. |
+| `403` | Caller lacks `UserAdminAccess`. |
+| `404` | User not found. |
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X POST https://api.cobranzadigital.com/api/v1/admin/users/auth0%7Cabc123xyz/temporary-password \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"temporaryPassword": "NuevaClave@2026!"}'
+```
+
+```json Response
+{
+  "id": "auth0|abc123xyz",
+  "email": "maria.lopez@restaurantenorte.mx",
+  "userName": "maria.lopez.norte",
+  "roles": ["PosOperator"],
+  "tenantId": "11111111-0000-0000-0000-000000000001",
+  "storeId": "22222222-0000-0000-0000-000000000002",
+  "message": "Temporary password set successfully."
+}
+```
+</CodeGroup>

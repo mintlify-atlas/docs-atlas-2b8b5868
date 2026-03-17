@@ -1,0 +1,558 @@
+---
+title: "Reports"
+description: "Sales, payment, shift, inventory, and KPI reports for the point of sale."
+---
+
+**Base path:** `/api/v1/pos/reports`
+
+**Authentication required:** `TenantOrPlatform` + `PosReportViewer`. A tenant must be selected for most endpoints.
+
+## Common query parameters
+
+Most report endpoints share these date range parameters:
+
+| Parameter | Type | Description |
+|---|---|---|
+| `dateFrom` | `DateOnly` (YYYY-MM-DD) | Start of the report period (inclusive). |
+| `dateTo` | `DateOnly` (YYYY-MM-DD) | End of the report period (inclusive). |
+| `storeId` | `uuid` (optional) | Filter to a specific store. |
+
+---
+
+## Daily summary
+
+```
+GET /api/v1/pos/reports/daily-summary
+```
+
+Returns aggregate totals for a single business day.
+
+### Query parameters
+
+<ParamField query="date" type="string (YYYY-MM-DD)" required>
+  The business date to summarize.
+</ParamField>
+
+### Response
+
+<ResponseField name="date" type="string (YYYY-MM-DD)">The business date.</ResponseField>
+<ResponseField name="totalTickets" type="integer">Number of completed sales.</ResponseField>
+<ResponseField name="totalAmount" type="decimal">Total revenue.</ResponseField>
+<ResponseField name="totalItems" type="integer">Total units sold.</ResponseField>
+<ResponseField name="avgTicket" type="decimal">Average ticket value.</ResponseField>
+
+### Example
+
+```bash curl
+curl "https://api.cobranzadigital.com/api/v1/pos/reports/daily-summary?date=2026-03-17" \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "X-Tenant-Id: <tenantId>"
+```
+
+---
+
+## Top products
+
+```
+GET /api/v1/pos/reports/top-products
+```
+
+Returns the best-selling products by quantity in a date range.
+
+### Query parameters
+
+<ParamField query="dateFrom" type="string (YYYY-MM-DD)" required>Start date.</ParamField>
+<ParamField query="dateTo" type="string (YYYY-MM-DD)" required>End date.</ParamField>
+<ParamField query="top" type="integer" default="10">Number of products to return.</ParamField>
+<ParamField query="storeId" type="string (uuid)">Filter by store.</ParamField>
+<ParamField query="cashierUserId" type="string (uuid)">Filter by cashier.</ParamField>
+<ParamField query="shiftId" type="string (uuid)">Filter by shift.</ParamField>
+
+### Response
+
+Array of:
+
+<ResponseField name="productId" type="string (uuid)">Product ID.</ResponseField>
+<ResponseField name="productNameSnapshot" type="string">Product name as it was at time of sale.</ResponseField>
+<ResponseField name="qty" type="integer">Total units sold.</ResponseField>
+<ResponseField name="amount" type="decimal">Total revenue from this product.</ResponseField>
+
+### Example
+
+```bash curl
+curl "https://api.cobranzadigital.com/api/v1/pos/reports/top-products?dateFrom=2026-03-01&dateTo=2026-03-17&top=5" \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "X-Tenant-Id: <tenantId>"
+```
+
+---
+
+## Daily sales
+
+```
+GET /api/v1/pos/reports/sales/daily
+```
+
+Returns day-by-day sales totals for a date range.
+
+### Query parameters
+
+<ParamField query="dateFrom" type="string (YYYY-MM-DD)" required>Start date.</ParamField>
+<ParamField query="dateTo" type="string (YYYY-MM-DD)" required>End date.</ParamField>
+<ParamField query="storeId" type="string (uuid)">Filter by store.</ParamField>
+
+### Response
+
+Array of daily rows:
+
+<ResponseField name="businessDate" type="string (YYYY-MM-DD)">The business date.</ResponseField>
+<ResponseField name="tickets" type="integer">Completed sales count.</ResponseField>
+<ResponseField name="subtotal" type="decimal">Sales subtotal (before discounts).</ResponseField>
+<ResponseField name="discounts" type="decimal">Total discounts applied.</ResponseField>
+<ResponseField name="tax" type="decimal">Total tax collected.</ResponseField>
+<ResponseField name="totalSales" type="decimal">Net sales total.</ResponseField>
+<ResponseField name="avgTicket" type="decimal">Average ticket value.</ResponseField>
+<ResponseField name="voidsCount" type="integer">Number of voided sales.</ResponseField>
+<ResponseField name="voidsTotal" type="decimal">Total amount voided.</ResponseField>
+<ResponseField name="payments" type="object">
+  Payment method breakdown.
+  <Expandable title="Payments breakdown">
+    <ResponseField name="cash" type="decimal">Cash payments.</ResponseField>
+    <ResponseField name="card" type="decimal">Card payments.</ResponseField>
+    <ResponseField name="transfer" type="decimal">Transfer payments.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## Payment methods
+
+```
+GET /api/v1/pos/reports/payments/methods
+```
+
+Returns totals grouped by payment method for a date range.
+
+### Query parameters
+
+<ParamField query="dateFrom" type="string (YYYY-MM-DD)" required>Start date.</ParamField>
+<ParamField query="dateTo" type="string (YYYY-MM-DD)" required>End date.</ParamField>
+<ParamField query="storeId" type="string (uuid)">Filter by store.</ParamField>
+
+### Response
+
+<ResponseField name="dateFrom" type="string (YYYY-MM-DD)">Report start date.</ResponseField>
+<ResponseField name="dateTo" type="string (YYYY-MM-DD)">Report end date.</ResponseField>
+<ResponseField name="totals" type="array">
+  <Expandable title="Payment method total">
+    <ResponseField name="method" type="string">`"Cash"`, `"Card"`, or `"Transfer"`.</ResponseField>
+    <ResponseField name="count" type="integer">Number of payments with this method.</ResponseField>
+    <ResponseField name="amount" type="decimal">Total amount.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example
+
+```bash curl
+curl "https://api.cobranzadigital.com/api/v1/pos/reports/payments/methods?dateFrom=2026-03-01&dateTo=2026-03-17" \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "X-Tenant-Id: <tenantId>"
+```
+
+---
+
+## Hourly sales
+
+```
+GET /api/v1/pos/reports/sales/hourly
+```
+
+Returns sales grouped by hour of day, useful for identifying peak hours.
+
+### Query parameters
+
+<ParamField query="dateFrom" type="string (YYYY-MM-DD)" required>Start date.</ParamField>
+<ParamField query="dateTo" type="string (YYYY-MM-DD)" required>End date.</ParamField>
+<ParamField query="storeId" type="string (uuid)">Filter by store.</ParamField>
+
+### Response
+
+Array of:
+
+<ResponseField name="hour" type="integer">Hour of day (0–23) in the store's local time zone.</ResponseField>
+<ResponseField name="tickets" type="integer">Number of sales in this hour.</ResponseField>
+<ResponseField name="totalSales" type="decimal">Total revenue in this hour.</ResponseField>
+
+---
+
+## Sales by cashier
+
+```
+GET /api/v1/pos/reports/sales/cashiers
+```
+
+Returns sales performance broken down by cashier.
+
+### Query parameters
+
+<ParamField query="dateFrom" type="string (YYYY-MM-DD)" required>Start date.</ParamField>
+<ParamField query="dateTo" type="string (YYYY-MM-DD)" required>End date.</ParamField>
+<ParamField query="storeId" type="string (uuid)">Filter by store.</ParamField>
+
+### Response
+
+Array of:
+
+<ResponseField name="cashierUserId" type="string (uuid)">Cashier user ID.</ResponseField>
+<ResponseField name="tickets" type="integer">Total sales processed.</ResponseField>
+<ResponseField name="totalSales" type="decimal">Total revenue.</ResponseField>
+<ResponseField name="avgTicket" type="decimal">Average ticket value.</ResponseField>
+<ResponseField name="voidsCount" type="integer">Number of voids performed.</ResponseField>
+<ResponseField name="voidsTotal" type="decimal">Total voided amount.</ResponseField>
+<ResponseField name="payments" type="object">Payment method breakdown (cash, card, transfer).</ResponseField>
+
+---
+
+## Shifts summary
+
+```
+GET /api/v1/pos/reports/shifts/summary
+```
+
+Returns a summary of each shift in the date range.
+
+### Query parameters
+
+<ParamField query="dateFrom" type="string (YYYY-MM-DD)" required>Start date.</ParamField>
+<ParamField query="dateTo" type="string (YYYY-MM-DD)" required>End date.</ParamField>
+<ParamField query="storeId" type="string (uuid)">Filter by store.</ParamField>
+<ParamField query="cashierUserId" type="string (uuid)">Filter by cashier.</ParamField>
+
+### Response
+
+Array of:
+
+<ResponseField name="shiftId" type="string (uuid)">Shift ID.</ResponseField>
+<ResponseField name="cashierUserId" type="string (uuid)">Cashier who owned the shift.</ResponseField>
+<ResponseField name="openedAtUtc" type="string (ISO 8601)">Shift open time.</ResponseField>
+<ResponseField name="closedAtUtc" type="string (ISO 8601) | null">Shift close time.</ResponseField>
+<ResponseField name="closeReason" type="string | null">Close reason.</ResponseField>
+<ResponseField name="tickets" type="integer">Sales processed during the shift.</ResponseField>
+<ResponseField name="totalSales" type="decimal">Total revenue.</ResponseField>
+<ResponseField name="payments" type="object">Payment method breakdown.</ResponseField>
+<ResponseField name="closingExpectedCashAmount" type="decimal">Expected cash at close.</ResponseField>
+<ResponseField name="closingCountedCashAmount" type="decimal">Cash counted at close.</ResponseField>
+<ResponseField name="cashDifference" type="decimal">Difference between counted and expected cash.</ResponseField>
+
+---
+
+## Void reasons
+
+```
+GET /api/v1/pos/reports/voids/reasons
+```
+
+Returns void counts and amounts grouped by reason code.
+
+### Query parameters
+
+<ParamField query="dateFrom" type="string (YYYY-MM-DD)" required>Start date.</ParamField>
+<ParamField query="dateTo" type="string (YYYY-MM-DD)" required>End date.</ParamField>
+<ParamField query="storeId" type="string (uuid)">Filter by store.</ParamField>
+
+### Response
+
+Array of:
+
+<ResponseField name="reasonCode" type="string | null">The void reason code (e.g., `"CustomerRequest"`, `"CashierError"`).</ResponseField>
+<ResponseField name="reasonText" type="string | null">Free-text reason (populated when code is `"Other"`).</ResponseField>
+<ResponseField name="count" type="integer">Number of voids with this reason.</ResponseField>
+<ResponseField name="amount" type="decimal">Total voided amount.</ResponseField>
+
+---
+
+## Sales by category
+
+```
+GET /api/v1/pos/reports/sales/categories
+```
+
+Returns sales mix broken down by product category.
+
+### Query parameters
+
+<ParamField query="dateFrom" type="string (YYYY-MM-DD)" required>Start date.</ParamField>
+<ParamField query="dateTo" type="string (YYYY-MM-DD)" required>End date.</ParamField>
+<ParamField query="storeId" type="string (uuid)">Filter by store.</ParamField>
+<ParamField query="cashierUserId" type="string (uuid)">Filter by cashier.</ParamField>
+<ParamField query="shiftId" type="string (uuid)">Filter by shift.</ParamField>
+
+### Response
+
+<ResponseField name="items" type="array">
+  <Expandable title="Category mix item">
+    <ResponseField name="categoryId" type="string (uuid)">Category ID.</ResponseField>
+    <ResponseField name="categoryName" type="string">Category name.</ResponseField>
+    <ResponseField name="tickets" type="integer">Sales containing this category.</ResponseField>
+    <ResponseField name="quantity" type="integer">Total units sold.</ResponseField>
+    <ResponseField name="grossSales" type="decimal">Total revenue.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## Sales by product
+
+```
+GET /api/v1/pos/reports/sales/products
+```
+
+Returns sales mix broken down by individual product.
+
+### Query parameters
+
+<ParamField query="dateFrom" type="string (YYYY-MM-DD)" required>Start date.</ParamField>
+<ParamField query="dateTo" type="string (YYYY-MM-DD)" required>End date.</ParamField>
+<ParamField query="storeId" type="string (uuid)">Filter by store.</ParamField>
+<ParamField query="cashierUserId" type="string (uuid)">Filter by cashier.</ParamField>
+<ParamField query="shiftId" type="string (uuid)">Filter by shift.</ParamField>
+<ParamField query="top" type="integer" default="20">Number of products to include.</ParamField>
+
+### Response
+
+<ResponseField name="items" type="array">
+  <Expandable title="Product mix item">
+    <ResponseField name="productId" type="string (uuid)">Product ID.</ResponseField>
+    <ResponseField name="sku" type="string | null">Product SKU.</ResponseField>
+    <ResponseField name="productName" type="string">Product name.</ResponseField>
+    <ResponseField name="tickets" type="integer">Sales containing this product.</ResponseField>
+    <ResponseField name="quantity" type="integer">Total units sold.</ResponseField>
+    <ResponseField name="grossSales" type="decimal">Total revenue.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## Top extra add-ons
+
+```
+GET /api/v1/pos/reports/sales/addons/extras
+```
+
+Returns the most frequently added extras.
+
+### Query parameters
+
+<ParamField query="dateFrom" type="string (YYYY-MM-DD)" required>Start date.</ParamField>
+<ParamField query="dateTo" type="string (YYYY-MM-DD)" required>End date.</ParamField>
+<ParamField query="storeId" type="string (uuid)">Filter by store.</ParamField>
+<ParamField query="cashierUserId" type="string (uuid)">Filter by cashier.</ParamField>
+<ParamField query="shiftId" type="string (uuid)">Filter by shift.</ParamField>
+<ParamField query="top" type="integer" default="20">Number of extras to include.</ParamField>
+
+### Response
+
+<ResponseField name="items" type="array">
+  <Expandable title="Extra add-on item">
+    <ResponseField name="extraId" type="string (uuid)">Extra ID.</ResponseField>
+    <ResponseField name="extraSku" type="string | null">Extra SKU.</ResponseField>
+    <ResponseField name="extraName" type="string">Extra name.</ResponseField>
+    <ResponseField name="quantity" type="integer">Total units added.</ResponseField>
+    <ResponseField name="grossSales" type="decimal">Revenue contributed by this extra.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## Top option add-ons
+
+```
+GET /api/v1/pos/reports/sales/addons/options
+```
+
+Returns the most frequently selected option items across all sales.
+
+### Query parameters
+
+<ParamField query="dateFrom" type="string (YYYY-MM-DD)" required>Start date.</ParamField>
+<ParamField query="dateTo" type="string (YYYY-MM-DD)" required>End date.</ParamField>
+<ParamField query="storeId" type="string (uuid)">Filter by store.</ParamField>
+<ParamField query="cashierUserId" type="string (uuid)">Filter by cashier.</ParamField>
+<ParamField query="shiftId" type="string (uuid)">Filter by shift.</ParamField>
+<ParamField query="top" type="integer" default="20">Number of options to include.</ParamField>
+
+### Response
+
+<ResponseField name="items" type="array">
+  <Expandable title="Option add-on item">
+    <ResponseField name="optionItemId" type="string (uuid)">Option item ID.</ResponseField>
+    <ResponseField name="optionItemSku" type="string | null">Option item SKU.</ResponseField>
+    <ResponseField name="optionItemName" type="string">Option item name.</ResponseField>
+    <ResponseField name="usageCount" type="integer">Total times this option was selected.</ResponseField>
+    <ResponseField name="grossImpact" type="decimal">Revenue impact (price delta × usage count).</ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## KPIs summary
+
+```
+GET /api/v1/pos/reports/kpis/summary
+```
+
+Returns key performance indicators for a date range and optional filters.
+
+### Query parameters
+
+<ParamField query="dateFrom" type="string (YYYY-MM-DD)" required>Start date.</ParamField>
+<ParamField query="dateTo" type="string (YYYY-MM-DD)" required>End date.</ParamField>
+<ParamField query="storeId" type="string (uuid)">Filter by store.</ParamField>
+<ParamField query="cashierUserId" type="string (uuid)">Filter by cashier.</ParamField>
+<ParamField query="shiftId" type="string (uuid)">Filter by shift.</ParamField>
+
+### Response
+
+<ResponseField name="tickets" type="integer">Total completed sales.</ResponseField>
+<ResponseField name="totalItems" type="integer">Total units sold.</ResponseField>
+<ResponseField name="grossSales" type="decimal">Total gross revenue.</ResponseField>
+<ResponseField name="avgTicket" type="decimal">Average sale value.</ResponseField>
+<ResponseField name="avgItemsPerTicket" type="decimal">Average items per sale.</ResponseField>
+<ResponseField name="voidCount" type="integer">Total voids.</ResponseField>
+<ResponseField name="voidRate" type="decimal">Void rate as a decimal (e.g., `0.05` = 5%).</ResponseField>
+
+### Example
+
+```bash curl
+curl "https://api.cobranzadigital.com/api/v1/pos/reports/kpis/summary?dateFrom=2026-03-01&dateTo=2026-03-17" \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "X-Tenant-Id: <tenantId>"
+```
+
+---
+
+## Cash differences control
+
+```
+GET /api/v1/pos/reports/control/cash-differences
+```
+
+Returns cash reconciliation differences aggregated by day and broken down by shift, useful for detecting cash handling issues.
+
+### Query parameters
+
+<ParamField query="dateFrom" type="string (YYYY-MM-DD)" required>Start date.</ParamField>
+<ParamField query="dateTo" type="string (YYYY-MM-DD)" required>End date.</ParamField>
+<ParamField query="storeId" type="string (uuid)">Filter by store.</ParamField>
+<ParamField query="cashierUserId" type="string (uuid)">Filter by cashier.</ParamField>
+
+### Response
+
+<ResponseField name="daily" type="array">
+  Day-level aggregated differences.
+  <Expandable title="Daily row">
+    <ResponseField name="date" type="string (YYYY-MM-DD)">Business date.</ResponseField>
+    <ResponseField name="cashierUserId" type="string (uuid) | null">Cashier (null when aggregated across all cashiers).</ResponseField>
+    <ResponseField name="shifts" type="integer">Number of shifts on this date.</ResponseField>
+    <ResponseField name="expectedCash" type="decimal">Total expected cash across all shifts.</ResponseField>
+    <ResponseField name="countedCash" type="decimal">Total cash counted.</ResponseField>
+    <ResponseField name="difference" type="decimal">Net difference.</ResponseField>
+    <ResponseField name="reasonCount" type="integer">Number of voids with a reason recorded.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="shifts" type="array">
+  Shift-level detail.
+  <Expandable title="Shift row">
+    <ResponseField name="shiftId" type="string (uuid)">Shift ID.</ResponseField>
+    <ResponseField name="openedAt" type="string (ISO 8601)">Shift start.</ResponseField>
+    <ResponseField name="closedAt" type="string (ISO 8601) | null">Shift end.</ResponseField>
+    <ResponseField name="cashierUserId" type="string (uuid)">Cashier.</ResponseField>
+    <ResponseField name="cashierUserName" type="string | null">Cashier display name.</ResponseField>
+    <ResponseField name="expectedCash" type="decimal">Expected cash.</ResponseField>
+    <ResponseField name="countedCash" type="decimal">Counted cash.</ResponseField>
+    <ResponseField name="difference" type="decimal">Cash difference.</ResponseField>
+    <ResponseField name="closeReason" type="string | null">Close reason.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## Inventory current
+
+```
+GET /api/v1/pos/reports/inventory/current
+```
+
+Returns current stock levels for all tracked items at a store.
+
+### Query parameters
+
+<ParamField query="storeId" type="string (uuid)" required>The store.</ParamField>
+<ParamField query="itemType" type="string">Filter by item type: `"Product"`, `"Extra"`, or `"OptionItem"`.</ParamField>
+<ParamField query="search" type="string">Free-text search on item name or SKU.</ParamField>
+
+### Response
+
+Array of inventory rows:
+
+<ResponseField name="itemType" type="string">Item type.</ResponseField>
+<ResponseField name="itemId" type="string (uuid)">Item ID.</ResponseField>
+<ResponseField name="itemName" type="string">Item name.</ResponseField>
+<ResponseField name="itemSku" type="string | null">Item SKU.</ResponseField>
+<ResponseField name="storeId" type="string (uuid)">Store ID.</ResponseField>
+<ResponseField name="stockOnHandQty" type="decimal">Current quantity on hand.</ResponseField>
+<ResponseField name="isInventoryTracked" type="boolean">Whether tracking is enabled.</ResponseField>
+<ResponseField name="availabilityReason" type="string">Reason for current availability state.</ResponseField>
+<ResponseField name="storeOverrideState" type="string | null">Store-level override state.</ResponseField>
+<ResponseField name="updatedAtUtc" type="string (ISO 8601) | null">Last balance update.</ResponseField>
+<ResponseField name="lastAdjustmentAtUtc" type="string (ISO 8601) | null">Timestamp of last manual adjustment.</ResponseField>
+
+---
+
+## Inventory low stock
+
+```
+GET /api/v1/pos/reports/inventory/low-stock
+```
+
+Returns items whose stock is at or below a threshold.
+
+### Query parameters
+
+<ParamField query="storeId" type="string (uuid)" required>The store.</ParamField>
+<ParamField query="threshold" type="decimal" default="5">Items at or below this quantity are included.</ParamField>
+<ParamField query="itemType" type="string">Filter by item type.</ParamField>
+<ParamField query="search" type="string">Free-text search.</ParamField>
+
+### Response
+
+Same shape as [Inventory current](#inventory-current).
+
+---
+
+## Inventory out of stock
+
+```
+GET /api/v1/pos/reports/inventory/out-of-stock
+```
+
+Returns items with zero or negative stock.
+
+### Query parameters
+
+<ParamField query="storeId" type="string (uuid)" required>The store.</ParamField>
+<ParamField query="itemType" type="string">Filter by item type.</ParamField>
+<ParamField query="search" type="string">Free-text search.</ParamField>
+
+### Response
+
+Same shape as [Inventory current](#inventory-current).
+
+### Example
+
+```bash curl
+curl "https://api.cobranzadigital.com/api/v1/pos/reports/inventory/out-of-stock?storeId=f47ac10b-58cc-4372-a567-0e02b2c3d479" \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "X-Tenant-Id: <tenantId>"
+```

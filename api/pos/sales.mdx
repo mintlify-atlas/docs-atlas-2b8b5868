@@ -1,0 +1,275 @@
+---
+title: "Sales"
+description: "Create sales and void existing sales at the point of sale."
+---
+
+**Base path:** `/api/v1/pos/sales`
+
+**Authentication required:** `TenantOrPlatform` + `PosOperator` policies. A tenant must be selected for all operations.
+
+---
+
+## Create a sale
+
+```
+POST /api/v1/pos/sales
+```
+
+Records a completed sale with one or more items and one or more payment entries.
+
+### Request body
+
+<ParamField body="clientSaleId" type="string (uuid)">
+  Client-generated idempotency key for the sale. If a sale with this ID already exists, the server returns the existing record instead of creating a duplicate.
+</ParamField>
+
+<ParamField body="occurredAtUtc" type="string (ISO 8601)">
+  The timestamp when the sale occurred. Defaults to server time if omitted.
+</ParamField>
+
+<ParamField body="items" type="array" required>
+  The line items in the sale.
+
+  <Expandable title="Item object">
+    <ParamField body="items[].productId" type="string (uuid)" required>
+      The ID of the product being sold.
+    </ParamField>
+    <ParamField body="items[].quantity" type="integer" required>
+      Number of units sold. Must be greater than 0.
+    </ParamField>
+    <ParamField body="items[].selections" type="array">
+      Option group selections for customizable products.
+      <Expandable title="Selection object">
+        <ParamField body="items[].selections[].groupKey" type="string" required>
+          The selection group key (e.g., `"size"`, `"sauce"`).
+        </ParamField>
+        <ParamField body="items[].selections[].optionItemId" type="string (uuid)" required>
+          The ID of the chosen option item.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+    <ParamField body="items[].extras" type="array">
+      Add-on extras attached to this line item.
+      <Expandable title="Extra object">
+        <ParamField body="items[].extras[].extraId" type="string (uuid)" required>
+          The ID of the extra.
+        </ParamField>
+        <ParamField body="items[].extras[].quantity" type="integer" required>
+          Number of units of this extra.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+    <ParamField body="items[].pricingSnapshot" type="object">
+      Pricing information captured at sale time, used to validate against server-side pricing.
+      <Expandable title="PricingSnapshot object">
+        <ParamField body="items[].pricingSnapshot.baseUnitPrice" type="decimal" required>
+          The catalog base price per unit.
+        </ParamField>
+        <ParamField body="items[].pricingSnapshot.appliedUnitPrice" type="decimal" required>
+          The actual price charged per unit (after any discounts).
+        </ParamField>
+        <ParamField body="items[].pricingSnapshot.wholesale" type="object">
+          Wholesale tier discount information, if applied.
+          <Expandable title="Wholesale tier object">
+            <ParamField body="wholesale.isApplied" type="boolean" required>
+              Whether a wholesale tier discount was applied.
+            </ParamField>
+            <ParamField body="wholesale.minQty" type="decimal">
+              Minimum quantity threshold that triggered this tier.
+            </ParamField>
+            <ParamField body="wholesale.discountType" type="string">
+              `"Percentage"` or `"FixedAmount"`.
+            </ParamField>
+            <ParamField body="wholesale.discountValue" type="decimal">
+              The discount value applied.
+            </ParamField>
+            <ParamField body="wholesale.source" type="string">
+              Source of the tier rule (e.g., `"TenantPolicy"`, `"ProductOverride"`).
+            </ParamField>
+          </Expandable>
+        </ParamField>
+        <ParamField body="items[].pricingSnapshot.pricingCalculatedAtUtc" type="string (ISO 8601)">
+          When the pricing quote was calculated.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="payment" type="object">
+  Single payment entry. Use `payments` (plural) for split payments.
+  <Expandable title="Payment object">
+    <ParamField body="payment.method" type="string" required>
+      Payment method: `"Cash"`, `"Card"`, or `"Transfer"`.
+    </ParamField>
+    <ParamField body="payment.amount" type="decimal" required>
+      Amount paid with this method.
+    </ParamField>
+    <ParamField body="payment.reference" type="string">
+      Optional reference (e.g., authorization code for card payments).
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="payments" type="array">
+  Array of payment entries for split-payment transactions. Provide either `payment` or `payments`, not both.
+</ParamField>
+
+<ParamField body="storeId" type="string (uuid)">
+  The store where the sale occurred. Required when the tenant has multi-store enabled.
+</ParamField>
+
+### Response
+
+<ResponseField name="saleId" type="string (uuid)">
+  The server-assigned unique ID of the created sale.
+</ResponseField>
+
+<ResponseField name="folio" type="string">
+  Human-readable receipt folio number (e.g., `"00001234"`).
+</ResponseField>
+
+<ResponseField name="occurredAtUtc" type="string (ISO 8601)">
+  The timestamp of the sale.
+</ResponseField>
+
+<ResponseField name="total" type="decimal">
+  The total amount of the sale.
+</ResponseField>
+
+### Status codes
+
+| Code | Description |
+|---|---|
+| `200 OK` | Sale created (or existing sale returned for duplicate `clientSaleId`). |
+| `400 Bad Request` | Validation error — missing required fields or business rule violation. |
+| `401 Unauthorized` | Missing or invalid token. |
+| `403 Forbidden` | Insufficient policy (`PosOperator` required). |
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X POST https://api.cobranzadigital.com/api/v1/pos/sales \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "X-Tenant-Id: <tenantId>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "clientSaleId": "550e8400-e29b-41d4-a716-446655440000",
+    "items": [
+      {
+        "productId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "quantity": 2,
+        "pricingSnapshot": {
+          "baseUnitPrice": 25.00,
+          "appliedUnitPrice": 25.00
+        }
+      }
+    ],
+    "payment": {
+      "method": "Cash",
+      "amount": 50.00
+    },
+    "storeId": "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+  }'
+```
+
+```json Response
+{
+  "saleId": "d290f1ee-6c54-4b01-90e6-d701748f0851",
+  "folio": "00001234",
+  "occurredAtUtc": "2026-03-17T14:30:00Z",
+  "total": 50.00
+}
+```
+</CodeGroup>
+
+---
+
+## Void a sale
+
+```
+POST /api/v1/pos/sales/{saleId}/void
+```
+
+Voids a previously created sale. Voided sales are retained in the system with status `Void` and the void reason is recorded for audit purposes.
+
+### Path parameters
+
+<ParamField path="saleId" type="string (uuid)" required>
+  The ID of the sale to void.
+</ParamField>
+
+### Request body
+
+<ParamField body="reasonCode" type="string" required>
+  A code indicating why the sale was voided. Must be one of the `VoidReasonCode` enum values:
+
+  | Value | Description |
+  |---|---|
+  | `CustomerRequest` | The customer requested the cancellation. |
+  | `CashierError` | The cashier made an error during the sale. |
+  | `FraudSuspected` | Fraud was suspected on this transaction. |
+  | `DuplicateCharge` | The sale was a duplicate of another transaction. |
+  | `Other` | Any other reason (use `reasonText` to elaborate). |
+</ParamField>
+
+<ParamField body="reasonText" type="string">
+  Free-text explanation for the void. Required when `reasonCode` is `Other`.
+</ParamField>
+
+<ParamField body="note" type="string">
+  Internal note attached to the void record.
+</ParamField>
+
+<ParamField body="clientVoidId" type="string (uuid)">
+  Client-generated idempotency key for the void operation.
+</ParamField>
+
+### Response
+
+<ResponseField name="saleId" type="string (uuid)">
+  The ID of the voided sale.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  The updated sale status. Will be `"Void"`.
+</ResponseField>
+
+<ResponseField name="voidedAtUtc" type="string (ISO 8601)">
+  Timestamp when the void was processed.
+</ResponseField>
+
+### Status codes
+
+| Code | Description |
+|---|---|
+| `200 OK` | Sale voided successfully. |
+| `400 Bad Request` | Invalid `reasonCode` or the sale is already voided. |
+| `401 Unauthorized` | Missing or invalid token. |
+| `403 Forbidden` | Insufficient policy. |
+| `404 Not Found` | Sale not found. |
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X POST https://api.cobranzadigital.com/api/v1/pos/sales/d290f1ee-6c54-4b01-90e6-d701748f0851/void \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "X-Tenant-Id: <tenantId>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "reasonCode": "CashierError",
+    "reasonText": "Wrong product scanned",
+    "clientVoidId": "c56a4180-65aa-42ec-a945-5fd21dec0538"
+  }'
+```
+
+```json Response
+{
+  "saleId": "d290f1ee-6c54-4b01-90e6-d701748f0851",
+  "status": "Void",
+  "voidedAtUtc": "2026-03-17T14:45:00Z"
+}
+```
+</CodeGroup>

@@ -1,0 +1,394 @@
+---
+title: Reports
+description: All POS reporting endpoints in CobranzaDigital — sales summaries, payment breakdowns, shift audits, cashier performance, void analysis, and inventory status.
+---
+
+## Overview
+
+The `PosReportsController` exposes a rich set of read-only analytical endpoints under `api/v1/pos/reports`. Reports are scoped to a tenant and optionally filtered by store, cashier, shift, and date range. Date ranges are interpreted in the **store's local timezone** (`Store.TimeZoneId`) and converted to UTC for filtering against `Sale.OccurredAtUtc`.
+
+**Requires:** `TenantOrPlatform` + `PosReportViewer` policies  
+**Angular page:** `PosReportesPage` at route `/app/pos/reportes`  
+**Angular service:** `PosReportsApiService`
+
+<Note>
+  `SuperAdmin` users can query aggregated cross-tenant reports by omitting `X-Tenant-Id`. Four endpoints support global mode: `kpis/summary`, `sales/daily`, `payments/methods`, and `control/cash-differences`. All other endpoints require a tenant in scope.
+</Note>
+
+---
+
+## Common Query Parameters
+
+Most report endpoints accept these parameters:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `dateFrom` | `DateOnly` | Start date (inclusive, store-local timezone) |
+| `dateTo` | `DateOnly` | End date (inclusive, store-local timezone) |
+| `storeId` | `Guid?` | Filter by store. Omit to use `DefaultStoreId` from POS settings |
+| `cashierUserId` | `Guid?` | Filter by cashier |
+| `shiftId` | `Guid?` | Filter to a specific shift |
+
+All revenue totals and payment aggregates **exclude** voided sales (`Status=Void`).
+
+---
+
+## Sales Reports
+
+### Daily Sales
+
+`GET /api/v1/pos/reports/sales/daily?dateFrom=&dateTo=&storeId=`
+
+One row per business date.
+
+```json
+[
+  {
+    "businessDate": "2026-03-01",
+    "tickets": 2,
+    "subtotal": 160.00,
+    "discounts": 0,
+    "tax": 0,
+    "totalSales": 160.00,
+    "avgTicket": 80.00,
+    "voidsCount": 0,
+    "voidsTotal": 0,
+    "payments": { "cash": 100.00, "card": 60.00, "transfer": 0 }
+  }
+]
+```
+
+### Hourly Sales
+
+`GET /api/v1/pos/reports/sales/hourly?dateFrom=&dateTo=&storeId=`
+
+Aggregated by hour of day (0–23) across the date range. The Angular page renders these as a horizontal bar chart, normalized to the maximum `totalSales` value.
+
+```json
+[
+  { "hour": 9,  "tickets": 1, "totalSales": 100.00 },
+  { "hour": 10, "tickets": 1, "totalSales": 60.00  }
+]
+```
+
+### Sales by Cashier
+
+`GET /api/v1/pos/reports/sales/cashiers?dateFrom=&dateTo=&storeId=`
+
+Per-cashier breakdown including void metrics.
+
+```json
+[
+  {
+    "cashierUserId": "<guid>",
+    "tickets": 2,
+    "totalSales": 180.00,
+    "avgTicket": 90.00,
+    "voidsCount": 0,
+    "voidsTotal": 0,
+    "payments": { "cash": 100.00, "card": 0, "transfer": 80.00 }
+  }
+]
+```
+
+### Top Products
+
+`GET /api/v1/pos/reports/top-products?dateFrom=&dateTo=&top=10&storeId=&cashierUserId=&shiftId=`
+
+Ranked by quantity sold. `top` defaults to 10.
+
+```json
+[
+  {
+    "productId": "8e76bdf9-...",
+    "productNameSnapshot": "Latte",
+    "qty": 42,
+    "amount": 3150.00
+  }
+]
+```
+
+### Sales Mix by Category
+
+`GET /api/v1/pos/reports/sales/categories?dateFrom=&dateTo=&storeId=&cashierUserId=&shiftId=`
+
+Gross sales per category. `grossSales` = `SaleItems.LineTotal + SaleItemExtras.LineTotal + SaleItemSelections.PriceDeltaSnapshot × Quantity`.
+
+```json
+{
+  "items": [
+    {
+      "categoryId": "<guid>",
+      "categoryName": "Bebidas",
+      "tickets": 12,
+      "quantity": 21,
+      "grossSales": 3560.00
+    }
+  ]
+}
+```
+
+The Angular page computes each category's `percent` share of total gross sales and renders a proportional bar.
+
+### Sales Mix by Product
+
+`GET /api/v1/pos/reports/sales/products?dateFrom=&dateTo=&storeId=&cashierUserId=&shiftId=&top=20`
+
+Gross sales per product, capped at `top` (default 20).
+
+```json
+{
+  "items": [
+    {
+      "productId": "<guid>",
+      "sku": "P-A",
+      "productName": "Producto A",
+      "tickets": 8,
+      "quantity": 14,
+      "grossSales": 1820.00
+    }
+  ]
+}
+```
+
+---
+
+## Add-on Reports
+
+### Top Extras Sold
+
+`GET /api/v1/pos/reports/sales/addons/extras?dateFrom=&dateTo=&storeId=&cashierUserId=&shiftId=&top=20`
+
+Ranked by quantity sold.
+
+```json
+{
+  "items": [
+    {
+      "extraId": "<guid>",
+      "extraSku": "<guid>",
+      "extraName": "Queso extra",
+      "quantity": 18,
+      "grossSales": 360.00
+    }
+  ]
+}
+```
+
+### Top Options Used
+
+`GET /api/v1/pos/reports/sales/addons/options?dateFrom=&dateTo=&storeId=&cashierUserId=&shiftId=&top=20`
+
+Customization option items ranked by usage count.
+
+```json
+{
+  "items": [
+    {
+      "optionItemId": "<guid>",
+      "optionItemSku": "<guid>",
+      "optionItemName": "Salsa especial",
+      "usageCount": 11,
+      "grossImpact": 220.00
+    }
+  ]
+}
+```
+
+---
+
+## Payment Method Reports
+
+### Payments by Method
+
+`GET /api/v1/pos/reports/payments/methods?dateFrom=&dateTo=&storeId=`
+
+Breaks down all completed-sale payments by method.
+
+```json
+{
+  "dateFrom": "2026-03-01",
+  "dateTo": "2026-03-02",
+  "totals": [
+    { "method": "Cash",     "count": 10, "amount": 980.00  },
+    { "method": "Card",     "count": 5,  "amount": 650.00  },
+    { "method": "Transfer", "count": 2,  "amount": 280.00  }
+  ]
+}
+```
+
+The Angular page computes each method's percentage of the total and renders it inline. Methods are exactly the `PaymentMethod` enum string values: `Cash`, `Card`, `Transfer`.
+
+---
+
+## KPI Summary
+
+`GET /api/v1/pos/reports/kpis/summary?dateFrom=&dateTo=&storeId=&cashierUserId=&shiftId=`
+
+Aggregate operational KPIs for dashboards.
+
+```json
+{
+  "tickets": 42,
+  "totalItems": 97,
+  "grossSales": 10240.00,
+  "avgTicket": 243.81,
+  "avgItemsPerTicket": 2.31,
+  "voidCount": 3,
+  "voidRate": 0.0667
+}
+```
+
+`voidRate = voidCount / (tickets + voidCount)`.
+
+---
+
+## Shift Reports
+
+### Shift Summary
+
+`GET /api/v1/pos/reports/shifts/summary?dateFrom=&dateTo=&storeId=&cashierUserId=`
+
+One row per closed shift with sales and cash reconciliation data.
+
+```json
+[
+  {
+    "shiftId": "<guid>",
+    "cashierUserId": "<guid>",
+    "openedAtUtc": "2026-03-01T14:00:00Z",
+    "closedAtUtc": "2026-03-01T22:00:00Z",
+    "closeReason": null,
+    "tickets": 2,
+    "totalSales": 160.00,
+    "payments": { "cash": 100.00, "card": 60.00, "transfer": 0 },
+    "closingExpectedCashAmount": 600.00,
+    "closingCountedCashAmount": 600.00,
+    "cashDifference": 0
+  }
+]
+```
+
+### Cash Difference Control
+
+`GET /api/v1/pos/reports/control/cash-differences?dateFrom=&dateTo=&storeId=&cashierUserId=`
+
+Detailed cash reconciliation per shift, plus a daily rollup.
+
+```json
+{
+  "daily": [
+    {
+      "date": "2026-04-01",
+      "cashierUserId": "<guid>",
+      "shifts": 1,
+      "expectedCash": 1000.00,
+      "countedCash": 980.00,
+      "difference": -20.00,
+      "reasonCount": 1
+    }
+  ],
+  "shifts": [
+    {
+      "shiftId": "<guid>",
+      "openedAt": "2026-04-01T14:00:00Z",
+      "closedAt": "2026-04-01T22:00:00Z",
+      "cashierUserId": "<guid>",
+      "cashierUserName": "caja.norte",
+      "expectedCash": 1000.00,
+      "countedCash": 980.00,
+      "difference": -20.00,
+      "closeReason": "Short"
+    }
+  ]
+}
+```
+
+The Angular page highlights rows where `Math.abs(difference) > 0`.
+
+---
+
+## Void Reason Report
+
+`GET /api/v1/pos/reports/voids/reasons?dateFrom=&dateTo=&storeId=`
+
+Counts and amounts grouped by `VoidReasonCode`.
+
+```json
+[
+  {
+    "reasonCode": "CashierError",
+    "reasonText": "Wrong product",
+    "count": 3,
+    "amount": 420.00
+  }
+]
+```
+
+---
+
+## Daily Summary (Operational)
+
+`GET /api/v1/pos/reports/daily-summary?date=2026-02-12`
+
+Simple single-day summary used by the caja page header.
+
+```json
+{
+  "date": "2026-02-12",
+  "totalTickets": 34,
+  "totalAmount": 4860.00,
+  "totalItems": 71,
+  "avgTicket": 142.94
+}
+```
+
+---
+
+## Inventory Reports
+
+Three inventory snapshot endpoints are available under the reports path. See [Inventory](/features/inventory) for full details.
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/v1/pos/reports/inventory/current` | All tracked items with current stock |
+| `GET /api/v1/pos/reports/inventory/low-stock?threshold=5` | Items at or below the threshold |
+| `GET /api/v1/pos/reports/inventory/out-of-stock` | Items with zero stock |
+
+---
+
+## Using Reports in the Angular UI
+
+The `PosReportesPage` (`pos-reportes.page.ts`) loads all report sections in parallel using `Promise.allSettled`, so a failure in one section does not block others. Each section has an independent loading signal and error signal.
+
+**Default date range:** last 7 days in the store's business timezone, computed by `PosTimezoneService`.
+
+**Available filter controls:**
+- `dateFrom` / `dateTo` date pickers
+- `cashierUserId` dropdown (populated from the cashiers report)
+- `shiftId` dropdown (populated from the shifts summary)
+- Store ID (resolved automatically from `StoreContextService`)
+
+**Report sections loaded on the page:**
+
+| Section key | Report fetched |
+|-------------|----------------|
+| `dailySales` | `sales/daily` |
+| `payments` | `payments/methods` |
+| `hourly` | `sales/hourly` |
+| `topProducts` | `top-products` (top 10) |
+| `cashiers` | `sales/cashiers` |
+| `shifts` | `shifts/summary` |
+| `voidReasons` | `voids/reasons` |
+| `mixCategories` | `sales/categories` |
+| `mixProducts` | `sales/products` (top 20) |
+| `addonsExtras` | `sales/addons/extras` (top 20) |
+| `addonsOptions` | `sales/addons/options` (top 20) |
+| `cashDifferences` | `control/cash-differences` |
+| `inventoryCurrent` | `inventory/current` |
+| `inventoryLow` | `inventory/low-stock` |
+| `inventoryOut` | `inventory/out-of-stock` |
+
+<Tip>
+  SuperAdmin users must select a tenant via the Platform context (`PlatformTenantContextService`) before POS reports will load. The page surfaces a `tenantRequiredError` signal with a clear message when no tenant is selected.
+</Tip>

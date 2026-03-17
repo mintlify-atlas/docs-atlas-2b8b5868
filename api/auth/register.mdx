@@ -1,0 +1,83 @@
+---
+title: "Register"
+description: "Create a new user account. Returns a JWT access token and refresh token on success."
+---
+
+## Endpoint
+
+```
+POST /api/v1/auth/register
+```
+
+**Authentication:** None required — this endpoint is public (`AllowAnonymous`).
+
+## Request body
+
+<ParamField body="email" type="string" required>
+  The user's email address. Must be a valid RFC 5322 email format.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  The user's password. Minimum 8 characters.
+</ParamField>
+
+## Response
+
+Returns an `AuthResponse` object on success.
+
+<ResponseField name="accessToken" type="string">
+  A signed JWT used to authenticate subsequent API requests. Include it as `Authorization: Bearer <accessToken>`.
+</ResponseField>
+
+<ResponseField name="refreshToken" type="string">
+  An opaque token used to obtain a new `accessToken` when the current one expires.
+</ResponseField>
+
+<ResponseField name="accessTokenExpiresAt" type="string (ISO 8601)">
+  UTC timestamp indicating when the `accessToken` expires.
+</ResponseField>
+
+<ResponseField name="tokenType" type="string">
+  Always `"Bearer"`.
+</ResponseField>
+
+## Status codes
+
+| Code | Description |
+|---|---|
+| `200 OK` | Registration succeeded. Response body contains the token pair. |
+| `400 Bad Request` | Registration failed — email already in use, password too short, or invalid format. |
+| `500 Internal Server Error` | User was created but the session could not be initialized. |
+
+## Example
+
+<CodeGroup>
+```bash curl
+curl -X POST https://api.cobranzadigital.com/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "cashier@tienda.mx",
+    "password": "Segura123!"
+  }'
+```
+
+```json Response
+{
+  "accessToken": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refreshToken": "dGhpcyBpcyBhIHJlZnJlc2ggdG9rZW4...",
+  "accessTokenExpiresAt": "2026-03-17T15:00:00Z",
+  "tokenType": "Bearer"
+}
+```
+</CodeGroup>
+
+## Error response example
+
+```json
+{
+  "type": "https://tools.ietf.org/html/rfc9110#section-15.5.1",
+  "title": "Registration failed",
+  "detail": "Unable to register user.",
+  "status": 400
+}
+```

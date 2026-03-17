@@ -1,0 +1,81 @@
+---
+title: "Refresh Token"
+description: "Exchange a refresh token for a new JWT access token and refresh token pair."
+---
+
+## Endpoint
+
+```
+POST /api/v1/auth/refresh
+```
+
+**Authentication:** None required — this endpoint is public (`AllowAnonymous`).
+
+## Request body
+
+<ParamField body="refreshToken" type="string" required>
+  The refresh token previously returned by `/auth/login`, `/auth/register`, or an earlier `/auth/refresh` call.
+</ParamField>
+
+## Response
+
+Returns a new `AuthResponse` object with fresh tokens.
+
+<ResponseField name="accessToken" type="string">
+  A new signed JWT. Use this to replace the expired access token in your `Authorization` header.
+</ResponseField>
+
+<ResponseField name="refreshToken" type="string">
+  A **new** refresh token. Store this and discard the old one — the old token is immediately invalidated.
+</ResponseField>
+
+<ResponseField name="accessTokenExpiresAt" type="string (ISO 8601)">
+  UTC timestamp indicating when the new `accessToken` expires.
+</ResponseField>
+
+<ResponseField name="tokenType" type="string">
+  Always `"Bearer"`.
+</ResponseField>
+
+## Status codes
+
+| Code | Description |
+|---|---|
+| `200 OK` | Token refreshed successfully. |
+| `401 Unauthorized` | The refresh token is invalid, expired, or has already been used. |
+
+## Example
+
+<CodeGroup>
+```bash curl
+curl -X POST https://api.cobranzadigital.com/api/v1/auth/refresh \
+  -H "Content-Type: application/json" \
+  -d '{
+    "refreshToken": "dGhpcyBpcyBhIHJlZnJlc2ggdG9rZW4..."
+  }'
+```
+
+```json Response
+{
+  "accessToken": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...NEW",
+  "refreshToken": "bmV3UmVmcmVzaFRva2Vu...",
+  "accessTokenExpiresAt": "2026-03-17T16:00:00Z",
+  "tokenType": "Bearer"
+}
+```
+</CodeGroup>
+
+<Warning>
+Refresh tokens use a **rotation** pattern. Each token can only be used once. If you receive a `401`, the session is fully expired and the user must call `/auth/login` again.
+</Warning>
+
+## Error response example
+
+```json
+{
+  "type": "https://tools.ietf.org/html/rfc9110#section-15.5.1",
+  "title": "Invalid refresh token",
+  "detail": "The refresh token is invalid or expired.",
+  "status": 401
+}
+```

@@ -1,0 +1,226 @@
+---
+title: Inventory
+description: Per-store inventory tracking in CobranzaDigital — on-hand quantities, sale consumption, void reversal, adjustments, and the ShowOnlyInStock setting.
+---
+
+## Overview
+
+CobranzaDigital supports per-store inventory tracking for products and extras that have `IsInventoryTracked=true`. Inventory is stored in the `CatalogInventoryBalance` entity (V2 model) and the legacy `StoreInventory` entity, both keyed by `(StoreId, ItemId)`. Sales automatically consume tracked inventory; voids automatically reverse it.
+
+<CardGroup cols={2}>
+  <Card title="Operator" icon="eye">
+    `POST /api/v1/pos/inventory/validate-availability` — check stock before checkout
+  </Card>
+  <Card title="Admin (V2)" icon="wrench">
+    `api/v2/pos/inventory/*` — balances, movements, adjustments (feature-flagged)
+  </Card>
+</CardGroup>
+
+---
+
+## Data Model
+
+### CatalogInventoryBalance (V2)
+
+Defined in `PosCatalogEntities.cs`. Used by the V2 inventory API.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `TenantId` | `Guid` | Tenant isolation |
+| `StoreId` | `Guid` | Store this balance belongs to |
+| `ItemType` | `CatalogItemType` | `Product (0)`, `Extra (1)`, or `OptionItem (2)` |
+| `ItemId` | `Guid` | ID of the product or extra |
+| `OnHandQty` | `decimal(18,3)` | Current quantity on hand |
+| `UpdatedAtUtc` | `DateTimeOffset` | Last modification timestamp |
+| `RowVersion` | `byte[]` | Optimistic concurrency token |
+
+### StoreInventory (Legacy / Release C)
+
+Defined in `PosSalesEntities.cs`. Used by the legacy admin inventory endpoint.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `StoreId` | `Guid` | Store |
+| `ProductId` | `Guid` | Product (from template) |
+| `OnHand` | `decimal(18,3)` | On-hand quantity |
+| `Reserved` | `decimal(18,3)` | Reserved quantity (default `0`) |
+| `UpdatedAtUtc` | `DateTimeOffset` | Last update time |
+| `UpdatedByUserId` | `Guid?` | User who last updated |
+| `RowVersion` | `byte[]` | Optimistic concurrency token |
+
+---
+
+## Optimistic Concurrency
+
+Both `CatalogInventoryBalance` and `StoreInventory` carry a `RowVersion` (`byte[]`) column used as an EF Core concurrency token. When a sale deducts stock or an adjustment is applied, the row version in the `UPDATE` statement must match the current value in the database. A mismatch means another operation updated the record concurrently and the operation fails, preventing overselling.
+
+<Warning>
+  Race conditions between concurrent POS terminals at the same store are handled by `RowVersion` concurrency checks. The sale will return a conflict rather than silently oversell inventory.
+</Warning>
+
+---
+
+## How Sales Reduce Inventory
+
+When `POST /api/v1/pos/sales` creates a sale:
+
+1. The backend validates item availability (see precedence rules in [Catalog](/features/catalog)).
+2. For each `SaleItem` where the product has `IsInventoryTracked=true`, `OnHandQty` is decremented by `Quantity` in the same database transaction.
+3. For each `SaleItemExtra` where the extra has `IsInventoryTracked=true`, `OnHandQty` is decremented by `SaleItemExtra.Quantity`.
+4. A `CatalogInventoryAdjustment` record is written with `Reason=SaleConsumption`, `ReferenceType=Sale`, and `ReferenceId=saleId`.
+
+### Void Reversal
+
+When `POST /api/v1/pos/sales/{saleId}/void` is processed:
+
+- The backend reads the original `SaleConsumption` adjustment records for that sale.
+- For each tracked item, `OnHandQty` is incremented by the consumed quantity.
+- A new `CatalogInventoryAdjustment` is written with `Reason=VoidReversal`, `ReferenceType=Sale`, `ReferenceId=saleId`.
+
+---
+
+## ShowOnlyInStock Setting
+
+`PosSettings.ShowOnlyInStock` (defined in `PosSalesEntities.cs`, default `false`) controls POS behavior when inventory hits zero:
+
+<Tabs>
+  <Tab title="false (default)">
+    - Snapshot does **not** filter by stock — all active, available products appear regardless of `OnHandQty`.
+    - `CreateSale` does **not** block on zero stock (even if `OnHand = 0`, the sale goes through).
+  </Tab>
+  <Tab title="true">
+    - Snapshot **excludes** products and extras where `IsInventoryTracked=true` and `OnHandQty ≤ 0`. Products with no inventory row are treated as `OnHandQty=0`.
+    - `CreateSale` validates stock and returns `409 OutOfStock` if the requested quantity exceeds available stock.
+  </Tab>
+</Tabs>
+
+### 409 OutOfStock Response
+
+```json
+{
+  "status": 409,
+  "title": "Conflict",
+  "extensions": {
+    "itemType": "Product",
+    "itemId": "8e76bdf9-f73f-4fb4-bcb0-00ea59fd4699",
+    "itemName": "Latte",
+    "reason": "OutOfStock",
+    "availableQty": 1
+  }
+}
+```
+
+The Angular `PosCajaPage` detects `reason=OutOfStock` from the error payload and surfaces the item name plus available quantity to the cashier, with an option to adjust line quantities.
+
+---
+
+## Inventory Availability Validation
+
+**Endpoint:** `POST /api/v1/pos/inventory/validate-availability`  
+**Requires:** `PosOperator` policy
+
+Called by the Angular page during checkout pre-validation (`canCheckoutTicket()`) before submitting the sale. Returns per-line availability status.
+
+```json
+// Request
+{
+  "storeId": "d4e8f123-0000-0000-0000-000000000001",
+  "lines": [
+    { "productId": "8e76bdf9-...", "qty": 3 },
+    { "externalCode": "P-LAT-001", "qty": 2 }
+  ]
+}
+
+// Response
+{
+  "ok": false,
+  "lines": [
+    { "productId": "8e76bdf9-...", "externalCode": null, "requestedQty": 3, "onHandQty": 1, "ok": false, "message": "Insufficient stock" },
+    { "productId": null, "externalCode": "P-LAT-001", "requestedQty": 2, "onHandQty": 5, "ok": true, "message": null }
+  ],
+  "summary": { "insufficientCount": 1 }
+}
+```
+
+When lines fail, the UI shows them with an option to **adjust to available** quantity.
+
+---
+
+## Admin Inventory (Legacy)
+
+**Endpoint:** `GET /api/v1/pos/admin/inventory?storeId=&search=&onlyWithStock=`  
+**Requires:** `PosAdmin` policy
+
+Lists all active products for the tenant's catalog template at a given store, left-joined with `StoreInventory`. Fields:
+- `onHand`, `reserved`, `updatedAtUtc`, `hasInventoryRow` (`false` when no inventory row exists)
+- `search` filters by product name or SKU
+- `onlyWithStock=true` limits results to items with `onHand > 0`
+
+**Upsert:** `PUT /api/v1/pos/admin/inventory`
+
+Creates or updates the `StoreInventory` row for a given `(storeId, productId)` pair.
+
+**Inventory Settings:** `PUT /api/v1/pos/admin/inventory/settings`
+
+Updates `PosSettings` for the tenant, including `ShowOnlyInStock`.
+
+---
+
+## Inventory V2 (Feature-Flagged)
+
+**Requires:** `PosAdmin` policy, API version `2.0`, feature flag `inventory.v2.enabled`  
+**Route prefix:** `api/v2/pos/inventory`
+
+V2 provides a richer inventory management layer with filtering, pagination, movement history, and batch adjustments.
+
+### Balances
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /balances?storeId=&q=&categoryId=&tracked=&onHandMin=&onHandMax=&page=&pageSize=` | Paginated inventory balances with filtering |
+| `GET /balances/export?storeId=...` | CSV export (max 50,000 rows) with columns: `ItemType, ExternalCode, Name, CategoryName, IsInventoryTracked, OnHandQty, UpdatedAtUtc` |
+
+### Movements
+
+`GET /movements?storeId=&itemType=&itemId=&from=&to=&reason=&referenceType=&referenceId=&createdByUserId=&page=&pageSize=`
+
+Full audit trail of every inventory change. The `reason` field maps to `InventoryAdjustmentReason`:
+
+| Reason | Use case |
+|--------|----------|
+| `InitialLoad` | First-time stock entry |
+| `Purchase` | Stock received from supplier |
+| `Return` | Customer return |
+| `Waste` | Expired or discarded stock |
+| `Damage` | Damaged goods write-off |
+| `Correction` | Manual count correction |
+| `TransferIn` / `TransferOut` | Inter-store transfer |
+| `ManualCount` | Physical inventory count |
+| `SaleConsumption` | Automatically created by a sale |
+| `VoidReversal` | Automatically created by a void |
+
+### Adjustments
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /adjustments` | Create a single inventory adjustment |
+| `POST /adjustments/batch` | Create multiple adjustments atomically |
+| `POST /adjustments/batch/validate` | Dry-run validate a batch before applying |
+
+<Note>
+  V2 inventory endpoints require the `inventory.v2.enabled` feature flag to be active. When the flag is off, all V2 inventory routes return `404`.
+</Note>
+
+---
+
+## Inventory Reports
+
+The reports API exposes three inventory snapshot endpoints (no date range — always current state):
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/v1/pos/reports/inventory/current?storeId=` | All tracked items with current stock |
+| `GET /api/v1/pos/reports/inventory/low-stock?storeId=&threshold=5` | Items with `OnHandQty ≤ threshold` |
+| `GET /api/v1/pos/reports/inventory/out-of-stock?storeId=` | Items with `OnHandQty ≤ 0` |
+
+All three support `itemType` (`Product` | `Extra`) and `search` filters, and return `InventoryReportRowDto` with fields: `itemType`, `itemId`, `itemName`, `itemSku`, `storeId`, `stockOnHandQty`, `isInventoryTracked`, `availabilityReason`, `storeOverrideState`, `updatedAtUtc`, `lastAdjustmentAtUtc`.

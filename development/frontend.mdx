@@ -1,0 +1,274 @@
+---
+title: Frontend Development
+description: Angular 21 project structure, conventions, state management, HTTP layer, routing, and coding standards for CobranzaDigital.
+---
+
+## Project structure
+
+```
+frontend/src/app/
+├── core/           # Cross-cutting concerns (guards, interceptors, services)
+│   ├── guards/
+│   ├── http/
+│   └── services/
+├── features/       # Feature modules loaded lazily
+│   ├── admin/
+│   ├── app-shell/
+│   ├── auth/
+│   ├── platform/
+│   ├── pos/
+│   └── weather-forecast/
+└── shared/         # Reusable presentational components and utilities
+```
+
+The entry point is `src/main.ts`. Global styles are split between `src/styles.scss` (SCSS) and `src/styles/variables.css` (CSS custom properties).
+
+## Feature modules
+
+| Feature | Route prefix | Access |
+|---|---|---|
+| `auth` | `/login`, `/register` | Public |
+| `app-shell` | `/app` | Authenticated (`authGuard`) |
+| `weather-forecast` | `/app/dashboard` | Any authenticated user |
+| `admin` | `/app/admin` | Any authenticated user |
+| `platform` | `/app/platform` | `SuperAdmin` only |
+| `pos` | `/app/pos` | `AdminStore`, `Cashier`, `Manager` |
+
+All feature routes inside `app-shell` are loaded lazily via `loadChildren` or `loadComponent`.
+
+## Routing
+
+The root router in `app.routes.ts` bootstraps the shell behind `authGuard`:
+
+```typescript app.routes.ts
+export const routes: Routes = [
+  { path: '', pathMatch: 'full', redirectTo: 'login' },
+  {
+    path: 'login',
+    loadComponent: () =>
+      import('./features/auth/pages/login/login.component').then((m) => m.LoginComponent),
+  },
+  {
+    path: 'app',
+    canMatch: [authGuard],
+    canActivate: [authGuard],
+    loadChildren: () =>
+      import('./features/app-shell/app-shell.routes').then((m) => m.appShellRoutes),
+  },
+  { path: '**', redirectTo: 'login' },
+];
+```
+
+Inside the shell, `roleGuard` restricts access to `platform` and `pos`:
+
+```typescript app-shell.routes.ts
+{
+  path: 'platform',
+  canMatch: [roleGuard(['SuperAdmin'])],
+  canActivate: [roleGuard(['SuperAdmin'])],
+  data: { roles: ['SuperAdmin'] },
+  loadChildren: () => import('../platform/platform.routes').then((m) => m.platformRoutes),
+},
+{
+  path: 'pos',
+  canMatch: [roleGuard(['AdminStore', 'Cashier', 'Manager'])],
+  canActivate: [roleGuard(['AdminStore', 'Cashier', 'Manager'])],
+  data: { roles: ['AdminStore', 'Cashier', 'Manager'] },
+  loadChildren: () => import('../pos/pos.routes').then((m) => m.posRoutes),
+},
+```
+
+### Route guards
+
+<CardGroup cols={2}>
+  <Card title="authGuard" icon="lock">
+    Checks `AuthService.isAuthenticated()`. Redirects to `/login` if the user has no valid session. Used on the root `/app` route.
+  </Card>
+  <Card title="roleGuard" icon="shield-check">
+    Factory guard that accepts a list of allowed roles. Works as both `CanMatch` and `CanActivate`. Redirects unauthorized users to `/app/dashboard`.
+  </Card>
+</CardGroup>
+
+## HTTP layer
+
+Three functional interceptors are registered in `app.config.ts`:
+
+### `authInterceptor`
+
+Attaches the JWT access token from `localStorage` as a `Bearer` header. Skips public routes:
+
+```typescript auth.interceptor.ts
+const PUBLIC_API_PATHS = ['/v1/auth/login', '/v1/auth/register', '/v1/auth/refresh'];
+const PUBLIC_PREFIXES = ['/health', '/swagger'];
+const ALLOWED_API_HOSTS = ['api.cobranzadigital.site', 'localhost', '127.0.0.1'];
+```
+
+### `refreshTokenInterceptor`
+
+Handles `401` responses by transparently refreshing the access token with the stored refresh token. Uses `shareReplay(1)` to deduplicate concurrent refresh calls. On a failed refresh it calls `authService.logout()` and navigates to `/login`.
+
+### `errorInterceptor` (`error.interceptor.ts`)
+
+Centralized error handling for non-auth HTTP errors.
+
+### `platformTenantInterceptor` (`platform-tenant.interceptor.ts`)
+
+Injects the `X-Tenant-Id` header for SuperAdmin requests that target a specific tenant scope.
+
+## Component conventions
+
+All components follow these rules from `AGENTS.md`:
+
+<CardGroup cols={2}>
+  <Card title="Standalone components">
+    `standalone: true` is the default in Angular 20+. Never set it explicitly in the `@Component` decorator.
+  </Card>
+  <Card title="OnPush change detection">
+    Every component must declare `changeDetection: ChangeDetectionStrategy.OnPush`.
+  </Card>
+  <Card title="input() / output() functions">
+    Use the signal-based `input()` and `output()` functions. Never use `@Input()` or `@Output()` decorators.
+  </Card>
+  <Card title="Host bindings">
+    Place host bindings inside the `host` object of `@Component` or `@Directive`. Never use `@HostBinding` or `@HostListener`.
+  </Card>
+</CardGroup>
+
+**Component selector conventions** (enforced by ESLint):
+
+- Components: `element` type, `app-` prefix, `kebab-case` — e.g. `app-pos-caja`
+- Directives: `attribute` type, `app` prefix, `camelCase` — e.g. `appRoleRestricted`
+
+**Template rules:**
+
+- Use native control flow: `@if`, `@for`, `@switch`. Never use `*ngIf`, `*ngFor`, `*ngSwitch`.
+- Use `class` bindings instead of `ngClass`.
+- Use `style` bindings instead of `ngStyle`.
+- Use `NgOptimizedImage` for all static images.
+- Do not write arrow functions in templates.
+
+## State management
+
+The application uses Angular signals exclusively — there is no NgRx or other external state library.
+
+```typescript Example component state
+import { Component, ChangeDetectionStrategy, signal, computed, input } from '@angular/core';
+
+@Component({
+  selector: 'app-example',
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  template: `
+    @if (isLoading()) {
+      <p>Loading...</p>
+    } @else {
+      <p>Total: {{ total() }}</p>
+    }
+  `,
+})
+export class ExampleComponent {
+  items = input<Item[]>([]);
+
+  isLoading = signal(false);
+  total = computed(() => this.items().reduce((sum, i) => sum + i.price, 0));
+}
+```
+
+**Rules:**
+
+- Use `signal()` for local mutable state.
+- Use `computed()` for derived values.
+- Use `update()` or `set()` to change signal values — never `mutate()`.
+- Keep state transformations pure.
+
+## Forms
+
+Prefer **Reactive forms** over Template-driven forms.
+
+## Services
+
+- All singleton services use `providedIn: 'root'`.
+- Use the `inject()` function instead of constructor injection.
+
+```typescript Example service
+import { Injectable, inject } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+
+@Injectable({ providedIn: 'root' })
+export class PosReportsApiService {
+  private readonly http = inject(HttpClient);
+
+  getDailySummary(storeId: string) {
+    return this.http.get(`/api/v1/pos/reports/daily-summary`, { params: { storeId } });
+  }
+}
+```
+
+## Linting and formatting
+
+<Tabs>
+  <Tab title="ESLint">
+    Configuration lives in `eslint.config.js` using the flat config format:
+
+    ```javascript eslint.config.js
+    module.exports = defineConfig([
+      {
+        files: ['**/*.ts'],
+        extends: [
+          eslint.configs.recommended,
+          tseslint.configs.recommended,
+          tseslint.configs.stylistic,
+          angular.configs.tsRecommended,
+        ],
+        processor: angular.processInlineTemplates,
+      },
+      {
+        files: ['**/*.html'],
+        extends: [angular.configs.templateRecommended, angular.configs.templateAccessibility],
+      },
+    ]);
+    ```
+
+    The `templateAccessibility` ruleset enforces WCAG AA compliance checks at lint time.
+  </Tab>
+  <Tab title="Prettier">
+    Prettier configuration is in `.prettierrc`:
+
+    ```json .prettierrc
+    {
+      "singleQuote": true,
+      "printWidth": 100,
+      "trailingComma": "all",
+      "semi": true
+    }
+    ```
+
+    HTML files use the `angular` parser. Formatting runs automatically on staged files via `lint-staged` and Husky.
+  </Tab>
+</Tabs>
+
+## npm scripts
+
+| Script | Command | Description |
+|---|---|---|
+| `start` | `ng serve` | Dev server with proxy on `localhost:4200` |
+| `build` | `ng build` | Production build |
+| `watch` | `ng build --watch --configuration development` | Incremental dev build |
+| `test` | `ng test` | Vitest unit tests (watch mode) |
+| `test:ci` | `ng test --watch=false` | Unit tests for CI |
+| `test:changed` | `ng test --watch=false --include='src/**/*.spec.ts'` | Run all spec files |
+| `lint` | `ng lint` | ESLint across `src/**/*.ts` and `src/**/*.html` |
+| `format` | `prettier . --write` | Format all files |
+| `format:check` | `prettier . --check` | Check formatting (CI) |
+| `e2e` | `playwright test` | Playwright E2E tests |
+| `e2e:ci` | `playwright test --reporter=line` | E2E tests for CI |
+| `e2e:ui` | `playwright test --ui` | Playwright UI mode |
+
+## Accessibility
+
+All components must pass AXE checks and meet WCAG AA minimums, including:
+
+- Focus management
+- Color contrast ratios
+- ARIA attributes
+
+This is partially enforced at lint time via `angular-eslint`'s `templateAccessibility` config.

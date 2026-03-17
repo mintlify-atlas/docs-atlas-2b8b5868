@@ -1,0 +1,77 @@
+---
+title: "Introduction"
+description: "CobranzaDigital is a multi-tenant SaaS Point-of-Sale (POS) platform for managing sales, shifts, catalog, inventory, and reporting across multiple stores."
+---
+
+## What is CobranzaDigital?
+
+CobranzaDigital is a full-stack POS platform built with **Angular 21** on the frontend and **.NET** on the backend. It provides businesses with a complete solution to operate physical stores — from opening a cash register shift, to ringing up sales with customizable products, to closing the day with a full cash reconciliation.
+
+The platform is designed as a **multi-tenant** system, allowing a single deployment to serve multiple independent businesses (tenants), each with their own stores, catalog, inventory, and user base.
+
+## Key capabilities
+
+<CardGroup cols={2}>
+  <Card title="Point of Sale" icon="cash-register" href="/features/pos-sales">
+    Record sales with line items, product customizations, extras, and multiple payment methods (cash, card, transfer).
+  </Card>
+  <Card title="Shift Management" icon="clock" href="/features/pos-shifts">
+    Open and close cash register shifts with full cash reconciliation, denomination counting, and audit trail.
+  </Card>
+  <Card title="Product Catalog" icon="tag" href="/features/catalog">
+    Manage products with configurable option groups, extras, and per-store pricing rules.
+  </Card>
+  <Card title="Inventory" icon="boxes-stacked" href="/features/inventory">
+    Track stock levels per store with optimistic concurrency control to prevent overselling.
+  </Card>
+  <Card title="Reports" icon="chart-bar" href="/features/reports">
+    Operational sales reports with breakdowns by payment method, product, and time period.
+  </Card>
+  <Card title="Platform Management" icon="building" href="/features/platform-management">
+    SuperAdmin tools to manage tenants, stores, and platform-wide settings.
+  </Card>
+</CardGroup>
+
+## System overview
+
+CobranzaDigital is structured around three levels of access:
+
+| Level | Roles | Scope |
+|-------|-------|-------|
+| **Platform** | `SuperAdmin` | Manages all tenants and stores across the platform |
+| **Tenant Admin** | `AdminStore`, `Manager` | Manages catalog, inventory, and staff within their tenant |
+| **Cashier** | `Cashier` | Operates the POS terminal — sales and shifts |
+
+## Technology stack
+
+<CardGroup cols={2}>
+  <Card title="Frontend" icon="browser">
+    Angular 21 with standalone components, signals for state management, and lazy-loaded feature routes.
+  </Card>
+  <Card title="Backend" icon="server">
+    .NET API using Clean Architecture (Domain / Application / Infrastructure / Api layers).
+  </Card>
+  <Card title="Authentication" icon="lock">
+    JWT access tokens with refresh token rotation. Role-based and policy-based authorization.
+  </Card>
+  <Card title="Database" icon="database">
+    SQL Server (production) with SQLite support for local development and testing.
+  </Card>
+</CardGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get the platform running locally in minutes.
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/architecture">
+    Understand the system design and project structure.
+  </Card>
+  <Card title="Authentication" icon="key" href="/concepts/authentication">
+    Learn how JWT auth and role policies work.
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/auth/overview">
+    Explore the full REST API.
+  </Card>
+</CardGroup>

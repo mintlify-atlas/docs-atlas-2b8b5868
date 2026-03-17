@@ -1,80 +1,145 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Clone and run the CobranzaDigital frontend and backend locally in under 10 minutes.
 ---
 
-## Get started in three steps
+## Prerequisites
 
-Get your documentation site running locally and make your first customization.
+Before you begin, install the following tools:
 
-### Step 1: Set up your local environment
+| Tool | Required version |
+|------|------------------|
+| Node.js | 22 or later (LTS recommended) |
+| npm | 11.8.0 (pinned via `packageManager` field) |
+| .NET SDK | 10.0.100 (`rollForward: latestFeature`) |
+| SQL Server | 2019 or later (or a compatible Azure SQL instance) |
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+<Tip>
+The backend pins the .NET SDK version in `backend/global.json`. Running `dotnet --version` inside the `backend/` directory will show `10.0.100` once the SDK is installed.
+</Tip>
 
-### Step 2: Deploy your changes
+## Clone the repository
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+<Steps>
+  <Step title="Clone and enter the project">
+    <CodeGroup>
+      ```bash git
+      git clone https://github.com/your-org/cobranza-digital.git
+      cd cobranza-digital
+      ```
+    </CodeGroup>
+  </Step>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+  <Step title="Configure the backend">
+    The backend reads configuration from `appsettings.json` and environment-specific overrides. For local development, create `appsettings.Development.json` inside `backend/src/CobranzaDigital.Api/` with the following values:
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    <CodeGroup>
+      ```json appsettings.Development.json
+      {
+        "ConnectionStrings": {
+          "DefaultConnection": "Server=localhost;Database=CobranzaDigitalDev;User Id=SA;Password=YourLocalPassword;TrustServerCertificate=true;"
+        },
+        "Jwt": {
+          "Issuer": "CobranzaDigital",
+          "Audience": "CobranzaDigital.Api",
+          "SigningKey": "replace-with-a-secure-key-at-least-32-chars",
+          "AccessTokenMinutes": 15,
+          "RefreshTokenDays": 7
+        },
+        "Cors": {
+          "AllowedOrigins": ["http://localhost:4200"]
+        },
+        "Swagger": {
+          "Enabled": true
+        },
+        "Pos": {
+          "RequireOpenShiftForSales": true
+        }
+      }
+      ```
+    </CodeGroup>
 
-### Step 3: Go live
+    <Warning>
+      Never commit a real `SigningKey` value. The default `CHANGE_ME_TO_A_SECURE_32_CHAR_MIN_KEY` in `appsettings.json` is a placeholder and will cause JWT verification to fail if left unchanged.
+    </Warning>
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    To apply database migrations automatically on startup, set the environment variable `APPLY_MIGRATIONS_ON_STARTUP=1`. To seed initial development data (verticals, tenants, stores, and a default SuperAdmin user), also set `SEED_DEV_DATA=1`.
+  </Step>
 
-## Next steps
+  <Step title="Run the backend">
+    <CodeGroup>
+      ```bash .NET CLI
+      cd backend
+      dotnet run --project src/CobranzaDigital.Api
+      ```
 
-Now that you have your docs running, explore these key features:
+      ```bash With dev seeding
+      cd backend
+      APPLY_MIGRATIONS_ON_STARTUP=1 SEED_DEV_DATA=1 dotnet run --project src/CobranzaDigital.Api
+      ```
+    </CodeGroup>
 
-<CardGroup cols={2}>
+    The API starts on `https://localhost:5001` by default. Swagger UI is available at `https://localhost:5001/swagger` when `Swagger:Enabled` is `true`.
 
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
+    Health endpoints:
+    - `GET /health` — overall status
+    - `GET /health/live` — liveness probe
+    - `GET /health/ready` — readiness probe (includes database check)
+  </Step>
 
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
+  <Step title="Configure the frontend">
+    Create or update `frontend/src/environments/environment.ts` to point at your running API:
 
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
+    <CodeGroup>
+      ```typescript environment.ts
+      export const environment = {
+        production: false,
+        apiBaseUrl: '/api',
+      };
+      ```
+    </CodeGroup>
 
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
+    The Angular dev server proxies `/api` requests to the backend. Confirm your `proxy.conf.json` (or equivalent) targets `https://localhost:5001`.
+  </Step>
 
-</CardGroup>
+  <Step title="Install frontend dependencies and start the dev server">
+    <CodeGroup>
+      ```bash npm
+      cd frontend
+      npm install
+      npm start
+      ```
+    </CodeGroup>
 
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+    The Angular CLI serves the app at `http://localhost:4200`. The root path redirects to `/login`.
+  </Step>
+
+  <Step title="Open the application">
+    Navigate to `http://localhost:4200`. You will see the login page.
+
+    If you seeded development data (`SEED_DEV_DATA=1`), a default `SuperAdmin` account is created. Use those credentials to log in. After a successful login, `AuthService` stores the access token and refresh token in `localStorage` under `access_token` and `refresh_token`, then redirects you to `/app/dashboard`.
+  </Step>
+</Steps>
+
+## Rate limiting
+
+The API applies a fixed-window rate limiter per client IP address. The defaults from `appsettings.json` allow 100 requests per 60-second window. Requests that exceed the limit receive `429 Too Many Requests`. You can adjust these limits via `RateLimiting:PermitLimit`, `RateLimiting:WindowSeconds`, and `RateLimiting:QueueLimit`.
+
+## Running tests
+
+<CodeGroup>
+  ```bash Backend
+  cd backend
+  dotnet test
+  ```
+
+  ```bash Frontend unit tests
+  cd frontend
+  npm run test:ci
+  ```
+
+  ```bash Frontend E2E (Playwright)
+  cd frontend
+  npm run e2e
+  ```
+</CodeGroup>

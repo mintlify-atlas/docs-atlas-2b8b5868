@@ -1,0 +1,62 @@
+---
+title: "Authentication Overview"
+description: "How CobranzaDigital uses JWT access tokens and refresh token rotation to authenticate API requests."
+---
+
+CobranzaDigital uses **JWT Bearer tokens** for authentication. Every protected endpoint requires a valid access token in the `Authorization` header. A companion **refresh token** allows clients to obtain new access tokens without requiring the user to log in again.
+
+## Token types
+
+| Token | Lifetime | Purpose |
+|---|---|---|
+| `accessToken` | Short-lived (minutes) | Sent with every API request |
+| `refreshToken` | Long-lived (days/weeks) | Used once to mint new tokens |
+
+## Including the token in requests
+
+Pass the access token as a `Bearer` token in the `Authorization` header:
+
+```bash
+curl https://api.cobranzadigital.com/api/v1/pos/shifts/current \
+  -H "Authorization: Bearer <accessToken>"
+```
+
+## Token refresh flow
+
+When the access token expires, exchange the refresh token for a new token pair. The old refresh token is invalidated immediately (rotation pattern — each refresh token can only be used once).
+
+```
+1. Client detects 401 on any protected endpoint
+2. POST /api/v1/auth/refresh  { "refreshToken": "<current refresh token>" }
+3. Server returns new accessToken + new refreshToken
+4. Client stores both and retries the original request
+5. If /refresh also returns 401, the session is expired — user must log in again
+```
+
+<Warning>
+Refresh tokens are single-use. Store the new refresh token returned by every `/refresh` call and discard the old one immediately.
+</Warning>
+
+## Multi-tenant header
+
+For tenant-scoped POS operations, include the tenant context header alongside the `Authorization` header:
+
+```bash
+-H "X-Tenant-Id: <tenantId>"
+```
+
+Platform-level callers may omit this header.
+
+## Endpoints
+
+<CardGroup cols={3}>
+  <Card title="Register" href="/api/auth/register" icon="user-plus">
+    Create a new user account and receive tokens.
+  </Card>
+  <Card title="Login" href="/api/auth/login" icon="key">
+    Authenticate with email and password.
+  </Card>
+  <Card title="Refresh" href="/api/auth/refresh" icon="rotate">
+    Obtain a new token pair using a refresh token.
+  </Card>
+</CardGroup>

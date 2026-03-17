@@ -1,0 +1,200 @@
+---
+title: Roles and Permissions
+description: All roles in CobranzaDigital, what each role can access, how role-based routing works in Angular, and how authorization policies are enforced in the .NET API.
+---
+
+## Role overview
+
+CobranzaDigital uses five active roles in its authorization model:
+
+| Role | Scope | Primary purpose |
+|------|-------|-----------------|
+| `SuperAdmin` | Global (cross-tenant) | Platform governance: manage verticals, tenants, stores, and cross-tenant dashboards |
+| `TenantAdmin` | Tenant | Full administration within a single tenant, including user management for that tenant |
+| `AdminStore` | Store (within a tenant) | Operational administration for a specific store |
+| `Manager` | Store (within a tenant) | POS operations and reporting; can open/close shifts and void sales |
+| `Cashier` | Store (within a tenant) | Point-of-sale operations (sales and shifts); no reporting or admin access |
+
+<Note>
+  The roles audit (`docs/roles-audit-2026-02-26.md`) also documents `User` and `Collector` as legacy seeded roles. Neither participates in any active authorization policy for business features.
+</Note>
+
+## Backend authorization policies
+
+Policies are defined in `AuthorizationPolicies.cs` and registered in `Program.cs`:
+
+```csharp
+// AuthorizationPolicies.cs
+public static class AuthorizationPolicies
+{
+    public const string UserAdminAccess    = "UserAdminAccess";
+    public const string RequireScope       = "RequireScope";
+    public const string PosAdmin           = "PosAdmin";
+    public const string PosOperator        = "PosOperator";
+    public const string PosReportViewer    = "PosReportViewer";
+    public const string PlatformOnly       = "PlatformOnly";
+    public const string TenantScoped       = "TenantScoped";
+    public const string TenantOrPlatform   = "TenantOrPlatform";
+    public const string RequiredScopeValue = "cobranza.read";
+}
+```
+
+Each policy maps to a set of roles:
+
+| Policy | Allowed roles |
+|--------|---------------|
+| `UserAdminAccess` | `AdminStore`, `TenantAdmin`, `SuperAdmin` |
+| `PosAdmin` | `AdminStore`, `Manager`, `TenantAdmin`, `SuperAdmin` |
+| `PosOperator` | `AdminStore`, `Cashier`, `Manager`, `TenantAdmin`, `SuperAdmin` |
+| `PosReportViewer` | `AdminStore`, `Manager`, `TenantAdmin`, `SuperAdmin` |
+| `PlatformOnly` | `SuperAdmin` |
+| `TenantScoped` | Any user with a `tenantId` JWT claim |
+| `TenantOrPlatform` | Any user with a `tenantId` JWT claim, or `SuperAdmin` |
+| `RequireScope` | Any user with `scope = cobranza.read` claim |
+
+### Policy registration (Program.cs)
+
+```csharp
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy(AuthorizationPolicies.UserAdminAccess, policy =>
+        policy.RequireRole("AdminStore", "TenantAdmin", "SuperAdmin"));
+    options.AddPolicy(AuthorizationPolicies.PosAdmin, policy =>
+        policy.RequireRole("AdminStore", "Manager", "TenantAdmin", "SuperAdmin"));
+    options.AddPolicy(AuthorizationPolicies.PosOperator, policy =>
+        policy.RequireRole("AdminStore", "Cashier", "Manager", "TenantAdmin", "SuperAdmin"));
+    options.AddPolicy(AuthorizationPolicies.PosReportViewer, policy =>
+        policy.RequireRole("AdminStore", "Manager", "TenantAdmin", "SuperAdmin"));
+    options.AddPolicy(AuthorizationPolicies.PlatformOnly, policy =>
+        policy.RequireRole("SuperAdmin"));
+    options.AddPolicy(AuthorizationPolicies.TenantScoped, policy =>
+        policy.RequireAssertion(context =>
+            context.User.HasClaim(x => x.Type == "tenantId")));
+    options.AddPolicy(AuthorizationPolicies.TenantOrPlatform, policy =>
+        policy.RequireAssertion(context =>
+            context.User.HasClaim(x => x.Type == "tenantId") ||
+            context.User.IsInRole("SuperAdmin")));
+});
+```
+
+## API endpoint access by role
+
+| Endpoint group | `SuperAdmin` | `TenantAdmin` | `AdminStore` | `Manager` | `Cashier` |
+|----------------|:-----------:|:-------------:|:------------:|:---------:|:---------:|
+| `POST /api/v1/auth/**` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `GET /api/v1/platform/**` | ✅ | ❌ | ❌ | ❌ | ❌ |
+| `/api/v1/admin/users` | ✅ | ✅ | ✅ | ❌ | ❌ |
+| `/api/v1/pos/admin/**` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `/api/v1/pos/sales`, `/api/v1/pos/shifts` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `/api/v1/pos/reports/**` | ✅ | ✅ | ✅ | ✅ | ❌ |
+
+<Info>
+  `SuperAdmin` access to operational POS endpoints (`/pos/sales`, `/pos/admin/**`) requires an active tenant context. Without the `X-Tenant-Id` header, those endpoints return `400 tenantId required for this endpoint in platform mode`.
+</Info>
+
+## Angular route guards
+
+The frontend enforces role-based navigation with two guards: `authGuard` and `roleGuard`.
+
+### authGuard
+
+`authGuard` protects the entire `/app` route tree. It checks that `AuthService.isAuthenticated()` returns `true`. If the user is not authenticated, it redirects to `/login`:
+
+```typescript
+// auth.guard.ts
+export const authGuard: CanMatchFn & CanActivateFn = () => {
+  const authService = inject(AuthService);
+  const router = inject(Router);
+
+  if (authService.isAuthenticated()) {
+    return true;
+  }
+
+  return router.createUrlTree(['/login']);
+};
+```
+
+### roleGuard
+
+`roleGuard` is a factory that accepts a list of required roles and returns a combined `CanMatchFn & CanActivateFn`. It calls `AuthService.hasAnyRole(roles)` and redirects to `/app/dashboard` when the user lacks the required role:
+
+```typescript
+// role.guard.ts
+export const roleGuard = (requiredRoles: readonly string[] = []): CanMatchFn & CanActivateFn => {
+  // ...
+  const evaluateRoleAccess = (route: GuardRoute, requiredRoles: readonly string[]) => {
+    const authService = inject(AuthService);
+    const router = inject(Router);
+
+    if (!authService.isAuthenticated()) {
+      return router.createUrlTree(['/login']);
+    }
+
+    const roles = resolveRequiredRoles(route, requiredRoles);
+    if (roles.length === 0 || authService.hasAnyRole(roles)) {
+      return true;
+    }
+
+    return router.createUrlTree(['/app/dashboard']);
+  };
+  // ...
+};
+```
+
+### Route-to-role mapping
+
+```typescript
+// app-shell.routes.ts
+export const appShellRoutes: Routes = [
+  {
+    path: '',
+    component: AppShellComponent,
+    children: [
+      { path: 'dashboard', loadComponent: () => import('../weather-forecast/...') },
+      { path: 'admin', loadChildren: () => import('../admin/admin.routes') },
+      {
+        path: 'platform',
+        canMatch: [roleGuard(['SuperAdmin'])],
+        canActivate: [roleGuard(['SuperAdmin'])],
+        data: { roles: ['SuperAdmin'] },
+        loadChildren: () => import('../platform/platform.routes'),
+      },
+      {
+        path: 'pos',
+        canMatch: [roleGuard(['AdminStore', 'Cashier', 'Manager'])],
+        canActivate: [roleGuard(['AdminStore', 'Cashier', 'Manager'])],
+        data: { roles: ['AdminStore', 'Cashier', 'Manager'] },
+        loadChildren: () => import('../pos/pos.routes'),
+      },
+    ],
+  },
+];
+```
+
+| Angular route | Required roles | Notes |
+|---------------|---------------|-------|
+| `/app/dashboard` | Any authenticated user | No `roleGuard`; `authGuard` only |
+| `/app/admin/**` | Varies by child route | Child routes define their own role requirements |
+| `/app/platform/**` | `SuperAdmin` | Entire subtree locked to platform admin |
+| `/app/pos/**` | `AdminStore`, `Cashier`, `Manager` | `TenantAdmin` and `SuperAdmin` do not access this route directly |
+
+## Post-login routing by role
+
+After a successful login, `AuthService.resolvePostLoginUrl()` sends users to different starting pages based on their role:
+
+| Role | Default post-login route |
+|------|-------------------------|
+| `Cashier` | `/app/pos/caja` |
+| `AdminStore`, `Manager`, `TenantAdmin`, `SuperAdmin` | Return URL if valid, otherwise `/app/dashboard` |
+| All others | `/app/dashboard` |
+
+## User creation scoping rules
+
+When creating users via `POST /api/v1/admin/users`, the actor's role determines which roles they can assign and in which scope:
+
+| Actor | Can create roles | Scope |
+|-------|-----------------|-------|
+| `SuperAdmin` | `TenantAdmin`, `AdminStore`, `Manager`, `Cashier` | Any valid tenant/store |
+| `TenantAdmin` | `TenantAdmin`, `AdminStore`, `Manager`, `Cashier` | Own tenant only |
+| `AdminStore` | `Manager`, `Cashier` | Own store only |
+| `Manager`, `Cashier` | — | No access (403) |

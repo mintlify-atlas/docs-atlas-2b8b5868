@@ -1,0 +1,349 @@
+---
+title: "Platform Stores"
+description: "List, inspect, and update stores and tenant default-store assignments. SuperAdmin only."
+---
+
+<Warning>
+  All endpoints on this page require the `PlatformOnly` authorization policy
+  (`SuperAdmin` role). A valid token without this role returns `403 Forbidden`.
+</Warning>
+
+---
+
+## List stores for a tenant
+
+<Note>
+  Returns every store belonging to the tenant together with derived operational
+  metadata such as whether an AdminStore user is assigned and whether the store
+  is the tenant's current default.
+</Note>
+
+```
+GET /api/v1/platform/tenants/{tenantId}/stores
+```
+
+### Path parameters
+
+<ParamField path="tenantId" type="string (uuid)" required>
+  The UUID of the tenant whose stores you want to list.
+</ParamField>
+
+### Response `200 OK`
+
+Returns an array of store list items.
+
+<ResponseField name="id" type="string (uuid)">
+  Unique identifier of the store.
+</ResponseField>
+
+<ResponseField name="tenantId" type="string (uuid)">
+  UUID of the owning tenant.
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Human-readable store name.
+</ResponseField>
+
+<ResponseField name="isActive" type="boolean">
+  Whether the store is currently active.
+</ResponseField>
+
+<ResponseField name="isDefaultStore" type="boolean">
+  `true` when this is the tenant's current default store (derived from `tenant.DefaultStoreId`).
+</ResponseField>
+
+<ResponseField name="hasAdminStore" type="boolean">
+  `true` when at least one user with the `AdminStore` role is assigned to this store.
+</ResponseField>
+
+<ResponseField name="adminStoreUserCount" type="integer">
+  Number of users with the `AdminStore` role in this store.
+</ResponseField>
+
+<ResponseField name="totalUsersInStore" type="integer">
+  Total number of users assigned to this store regardless of role.
+</ResponseField>
+
+<ResponseField name="timeZoneId" type="string">
+  IANA time-zone identifier, e.g. `America/Mexico_City`.
+</ResponseField>
+
+<ResponseField name="createdAtUtc" type="string (ISO 8601)">
+  UTC timestamp of store creation.
+</ResponseField>
+
+<ResponseField name="updatedAtUtc" type="string (ISO 8601)">
+  UTC timestamp of the last update.
+</ResponseField>
+
+### Status codes
+
+| Code | Description |
+|------|-------------|
+| `200` | Success — array returned (may be empty). |
+| `401` | Missing or invalid token. |
+| `403` | Caller is not a SuperAdmin. |
+| `404` | Tenant not found. |
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X GET https://api.cobranzadigital.com/api/v1/platform/tenants/11111111-0000-0000-0000-000000000001/stores \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```json Response
+[
+  {
+    "id": "22222222-0000-0000-0000-000000000001",
+    "tenantId": "11111111-0000-0000-0000-000000000001",
+    "name": "Sucursal Matriz",
+    "isActive": true,
+    "isDefaultStore": true,
+    "hasAdminStore": true,
+    "adminStoreUserCount": 2,
+    "totalUsersInStore": 8,
+    "timeZoneId": "America/Mexico_City",
+    "createdAtUtc": "2024-01-15T10:00:00Z",
+    "updatedAtUtc": "2024-06-01T14:30:00Z"
+  }
+]
+```
+</CodeGroup>
+
+---
+
+## Get store details
+
+```
+GET /api/v1/platform/stores/{storeId}
+```
+
+Returns the full detail of a single store, including the parent tenant's name.
+
+### Path parameters
+
+<ParamField path="storeId" type="string (uuid)" required>
+  The UUID of the store.
+</ParamField>
+
+### Response `200 OK`
+
+<ResponseField name="id" type="string (uuid)">
+  Unique identifier of the store.
+</ResponseField>
+
+<ResponseField name="tenantId" type="string (uuid)">
+  UUID of the owning tenant.
+</ResponseField>
+
+<ResponseField name="tenantName" type="string">
+  Human-readable name of the owning tenant.
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Human-readable store name.
+</ResponseField>
+
+<ResponseField name="isActive" type="boolean">
+  Whether the store is currently active.
+</ResponseField>
+
+<ResponseField name="isDefaultStore" type="boolean">
+  `true` when this is the tenant's current default store.
+</ResponseField>
+
+<ResponseField name="hasAdminStore" type="boolean">
+  `true` when at least one `AdminStore` user is assigned here.
+</ResponseField>
+
+<ResponseField name="adminStoreUserCount" type="integer">
+  Number of `AdminStore`-role users in this store.
+</ResponseField>
+
+<ResponseField name="totalUsersInStore" type="integer">
+  Total users assigned to this store.
+</ResponseField>
+
+<ResponseField name="timeZoneId" type="string">
+  IANA time-zone identifier.
+</ResponseField>
+
+<ResponseField name="createdAtUtc" type="string (ISO 8601)">
+  UTC creation timestamp.
+</ResponseField>
+
+<ResponseField name="updatedAtUtc" type="string (ISO 8601)">
+  UTC last-updated timestamp.
+</ResponseField>
+
+### Status codes
+
+| Code | Description |
+|------|-------------|
+| `200` | Success. |
+| `401` | Missing or invalid token. |
+| `403` | Caller is not a SuperAdmin. |
+| `404` | Store not found. |
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X GET https://api.cobranzadigital.com/api/v1/platform/stores/22222222-0000-0000-0000-000000000001 \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```json Response
+{
+  "id": "22222222-0000-0000-0000-000000000001",
+  "tenantId": "11111111-0000-0000-0000-000000000001",
+  "tenantName": "Restaurante El Norte",
+  "name": "Sucursal Matriz",
+  "isActive": true,
+  "isDefaultStore": true,
+  "hasAdminStore": true,
+  "adminStoreUserCount": 2,
+  "totalUsersInStore": 8,
+  "timeZoneId": "America/Mexico_City",
+  "createdAtUtc": "2024-01-15T10:00:00Z",
+  "updatedAtUtc": "2024-06-01T14:30:00Z"
+}
+```
+</CodeGroup>
+
+---
+
+## Update store
+
+```
+PUT /api/v1/platform/stores/{storeId}
+```
+
+Updates the editable fields of a store. Mutations are audit-logged with before/after snapshots of `name`, `isActive`, and `timeZoneId`.
+
+<Note>
+  This endpoint records an `UpdateStore` audit entry capturing the actor's user ID,
+  a correlation ID, and a before/after diff of all mutable fields.
+</Note>
+
+### Path parameters
+
+<ParamField path="storeId" type="string (uuid)" required>
+  The UUID of the store to update.
+</ParamField>
+
+### Request body
+
+<ParamField body="name" type="string" required>
+  New store name. Must not be empty.
+</ParamField>
+
+<ParamField body="timeZoneId" type="string" required>
+  IANA time-zone identifier to assign to the store. Must be a valid `TimeZoneInfo` identifier (e.g. `America/Mexico_City`, `America/Monterrey`).
+</ParamField>
+
+<ParamField body="isActive" type="boolean" required>
+  Set to `false` to deactivate the store.
+</ParamField>
+
+### Response `200 OK`
+
+Returns the updated `PlatformStoreDetailsDto` (same shape as [Get store details](#get-store-details)).
+
+### Status codes
+
+| Code | Description |
+|------|-------------|
+| `200` | Update successful; updated store returned. |
+| `400` | Validation failure (empty name, invalid time zone, etc.). |
+| `401` | Missing or invalid token. |
+| `403` | Caller is not a SuperAdmin. |
+| `404` | Store not found. |
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X PUT https://api.cobranzadigital.com/api/v1/platform/stores/22222222-0000-0000-0000-000000000001 \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Sucursal Centro",
+    "timeZoneId": "America/Mexico_City",
+    "isActive": true
+  }'
+```
+
+```json Response
+{
+  "id": "22222222-0000-0000-0000-000000000001",
+  "tenantId": "11111111-0000-0000-0000-000000000001",
+  "tenantName": "Restaurante El Norte",
+  "name": "Sucursal Centro",
+  "isActive": true,
+  "isDefaultStore": true,
+  "hasAdminStore": true,
+  "adminStoreUserCount": 2,
+  "totalUsersInStore": 8,
+  "timeZoneId": "America/Mexico_City",
+  "createdAtUtc": "2024-01-15T10:00:00Z",
+  "updatedAtUtc": "2026-03-17T12:00:00Z"
+}
+```
+</CodeGroup>
+
+---
+
+## Set tenant default store
+
+```
+PUT /api/v1/platform/tenants/{tenantId}/default-store
+```
+
+Changes which store is marked as the default for a tenant. The operation is audit-logged with the previous and new `defaultStoreId`.
+
+<Note>
+  The target store must belong to the tenant and must be active. Assigning an
+  inactive or foreign store returns `400 Bad Request`.
+</Note>
+
+### Path parameters
+
+<ParamField path="tenantId" type="string (uuid)" required>
+  UUID of the tenant whose default store you are changing.
+</ParamField>
+
+### Request body
+
+<ParamField body="defaultStoreId" type="string (uuid)" required>
+  UUID of the store to designate as the tenant's new default. Must be active and belong to this tenant.
+</ParamField>
+
+### Response `204 No Content`
+
+No response body is returned on success.
+
+### Status codes
+
+| Code | Description |
+|------|-------------|
+| `204` | Default store updated successfully. |
+| `400` | Store does not belong to the tenant, or the store is inactive. |
+| `401` | Missing or invalid token. |
+| `403` | Caller is not a SuperAdmin. |
+| `404` | Tenant or store not found. |
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X PUT https://api.cobranzadigital.com/api/v1/platform/tenants/11111111-0000-0000-0000-000000000001/default-store \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "defaultStoreId": "33333333-0000-0000-0000-000000000001"
+  }'
+```
+</CodeGroup>

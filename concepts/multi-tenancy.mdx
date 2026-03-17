@@ -1,0 +1,166 @@
+---
+title: Multi-Tenancy
+description: How CobranzaDigital isolates data and operations across tenants, stores, and the SuperAdmin platform layer.
+---
+
+## Data model
+
+CobranzaDigital organizes its data into three hierarchical levels:
+
+<CardGroup cols={3}>
+  <Card title="Vertical" icon="layer-group">
+    An industry or business category (e.g., restaurant, pharmacy). Every tenant belongs to exactly one vertical.
+  </Card>
+  <Card title="Tenant" icon="building">
+    A client organization on the platform. A tenant has a `name`, a URL-safe `slug`, and an optional `DefaultStoreId`. Tenants belong to a vertical.
+  </Card>
+  <Card title="Store" icon="store">
+    An operational branch of a tenant. Every store carries a `TenantId` to establish ownership. A tenant can have multiple stores when `PosSettings.MultiStoreEnabled` is `true`.
+  </Card>
+</CardGroup>
+
+The `Tenant` entity in `CobranzaDigital.Domain`:
+
+```csharp
+public sealed class Tenant : Entity
+{
+    public Guid VerticalId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string Slug { get; set; } = string.Empty;
+    public bool IsActive { get; set; } = true;
+    public Guid? DefaultStoreId { get; set; }
+    public DateTimeOffset CreatedAtUtc { get; set; }
+    public DateTimeOffset UpdatedAtUtc { get; set; }
+}
+```
+
+The `Store` entity always references its parent tenant:
+
+```csharp
+public sealed class Store : Entity
+{
+    public Guid TenantId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public bool IsActive { get; set; } = true;
+    public string TimeZoneId { get; set; } = "America/Mexico_City";
+    public DateTimeOffset CreatedAtUtc { get; set; }
+    public DateTimeOffset UpdatedAtUtc { get; set; }
+}
+```
+
+## Tenant resolution in the API
+
+The backend resolves the effective tenant for every request through `ITenantContext`, which exposes three properties:
+
+| Property | Description |
+|----------|-------------|
+| `TenantId` | The tenant assigned to the authenticated user (from the `tenantId` JWT claim). `null` for `SuperAdmin` users who have no tenant assignment. |
+| `EffectiveTenantId` | The tenant actually used for the current request. For `SuperAdmin`, this can be overridden via the `X-Tenant-Id` request header or the `tenantId` query parameter. |
+| `IsPlatformAdmin` | `true` when the user holds the `SuperAdmin` role. |
+
+The JWT `tenantId` claim is set at login time based on `ApplicationUser.TenantId`. If the claim is absent, `TenantContextService` falls back to reading `TenantId` directly from `AspNetUsers`.
+
+## Tenant isolation rules
+
+Every POS entity that crosses tenant boundaries carries an explicit `TenantId` column:
+
+```csharp
+public sealed class Sale : Entity
+{
+    // ...
+    public Guid StoreId { get; set; }
+    public Guid TenantId { get; set; }
+    // ...
+}
+
+public sealed class PosShift : Entity
+{
+    // ...
+    public Guid StoreId { get; set; }
+    public Guid TenantId { get; set; }
+}
+```
+
+Endpoints under `/api/v1/pos/` require the `TenantScoped` authorization policy:
+
+```csharp
+// AuthorizationPolicies.cs
+public const string TenantScoped = "TenantScoped";
+
+// Program.cs
+options.AddPolicy(AuthorizationPolicies.TenantScoped, policy =>
+    policy.RequireAssertion(context => context.User.HasClaim(x => x.Type == "tenantId")));
+```
+
+When a request supplies a `storeId` that belongs to a different tenant, the backend returns `404` — not `403` — to avoid leaking resource existence.
+
+## SuperAdmin vs. tenant-scoped access
+
+<Tabs>
+  <Tab title="Tenant users">
+    Users with roles `TenantAdmin`, `AdminStore`, `Manager`, or `Cashier` are bound to the tenant recorded in their JWT claim. They cannot override the effective tenant. If they send an `X-Tenant-Id` header referencing a different tenant, the API returns `403`.
+  </Tab>
+  <Tab title="SuperAdmin">
+    `SuperAdmin` has no tenant assignment in their JWT. They can operate in two modes:
+
+    - **Platform mode (cross-tenant)**: no `X-Tenant-Id` header sent. Aggregate report endpoints (`kpis/summary`, `sales/daily`, `payments/methods`, `control/cash-differences`) return cross-tenant data. Operational endpoints (`/pos/sales`, `/pos/shifts`, `/pos/admin/*`) return `400 tenantId required for this endpoint in platform mode`.
+    - **Tenant mode**: `SuperAdmin` sends `X-Tenant-Id: <guid>` on the request. The API uses that GUID as the effective tenant and all scoping rules apply as if the user belonged to that tenant.
+  </Tab>
+</Tabs>
+
+### Endpoint access matrix
+
+| Endpoint group | SuperAdmin (no `X-Tenant-Id`) | SuperAdmin (with `X-Tenant-Id`) |
+|----------------|-------------------------------|----------------------------------|
+| Aggregate reports (`kpis/summary`, `sales/daily`, etc.) | ✅ cross-tenant | ✅ tenant-specific |
+| Operational POS (`/pos/sales`, `/pos/shifts`, `/pos/admin/*`) | ❌ 400 tenant required | ✅ allowed |
+| `GET /pos/catalog/snapshot` without `storeId` | ❌ 400 tenant required | ✅ allowed |
+| `GET /pos/catalog/snapshot` with `storeId` | ✅ resolves via store | ✅ allowed |
+| `/api/v1/platform/**` | ✅ always allowed | ✅ allowed |
+
+## Frontend: platform-tenant interceptor
+
+On the frontend, the `platformTenantInterceptor` automatically attaches `X-Tenant-Id` when a `SuperAdmin` has selected a tenant context:
+
+```typescript
+// platform-tenant.interceptor.ts
+export const platformTenantInterceptor: HttpInterceptorFn = (req, next) => {
+  const authService = inject(AuthService);
+  const tenantContext = inject(PlatformTenantContextService);
+
+  if (!authService.hasRole('SuperAdmin')) {
+    return next(req);
+  }
+
+  const tenantId = tenantContext.getSelectedTenantId();
+  if (!tenantId) {
+    return next(req);
+  }
+
+  // Attach X-Tenant-Id only for POS admin/report/snapshot requests
+  const path = new URL(req.url, window.location.origin).pathname;
+  const isPosAdminRequest =
+    path.startsWith('/api/v1/pos/admin/') ||
+    path.startsWith('/api/v1/pos/reports/') ||
+    path === '/api/v1/pos/catalog/snapshot';
+
+  if (!isPosAdminRequest || path.startsWith('/api/v1/platform/')) {
+    return next(req);
+  }
+
+  return next(req.clone({ setHeaders: { 'X-Tenant-Id': tenantId } }));
+};
+```
+
+The selected tenant ID is stored as `platform_selected_tenant_id` in `localStorage`. If the active tenant is deleted from the Platform UI, the frontend clears this value to prevent sending stale `X-Tenant-Id` headers.
+
+## Platform management (SuperAdmin)
+
+The `/app/platform` section of the UI allows `SuperAdmin` users to:
+
+- Manage verticals and tenants via `/api/v1/platform/verticals` and `/api/v1/platform/tenants`
+- Manage stores per tenant via `/api/v1/platform/tenants/{tenantId}/stores`
+- Edit tenant details and default store via `PUT /api/v1/platform/tenants/{tenantId}`
+- View cross-tenant platform dashboards via `/api/v1/platform/dashboard/**`
+
+All platform endpoints require the `PlatformOnly` policy, which is satisfied only by the `SuperAdmin` role.

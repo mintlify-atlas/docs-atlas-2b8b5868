@@ -1,0 +1,65 @@
+---
+title: "Platform API Overview"
+description: "SuperAdmin-only APIs for managing tenants, stores, and platform-wide dashboards across the entire CobranzaDigital multi-tenant estate."
+---
+
+## What is the Platform tier?
+
+The Platform API gives **SuperAdmin** operators a cross-tenant view of the entire CobranzaDigital estate. It sits above the individual tenant scope and is never filtered by `X-Tenant-Id`.
+
+Through the Platform API you can:
+
+- Inspect and update any tenant's stores and default-store assignment
+- Monitor platform-wide KPIs, sales trends, alerts, and inventory health
+- Drill into per-tenant and per-store metrics without switching identity contexts
+
+<Warning>
+  Every endpoint in this group enforces the `PlatformOnly` authorization policy.
+  Only users with the `SuperAdmin` role can call these APIs. Any other authenticated
+  user receives `403 Forbidden`.
+</Warning>
+
+## Authentication
+
+All Platform API requests must include a valid Bearer token in the `Authorization` header.
+
+```bash
+Authorization: Bearer <token>
+```
+
+The token must carry the `SuperAdmin` role claim. An absent or invalid token returns `401 Unauthorized`; a valid token without the `SuperAdmin` role returns `403 Forbidden`.
+
+<Note>
+  Platform endpoints do **not** require the `X-Tenant-Id` header. Including it has no effect.
+</Note>
+
+## Base URL and versioning
+
+All Platform API routes are versioned under `/api/v1/platform/`:
+
+```
+https://{host}/api/v1/platform/...
+```
+
+## API groups
+
+<CardGroup cols={2}>
+  <Card title="Stores" href="/api/platform/stores">
+    List, inspect, and update stores and default-store assignments for any tenant.
+  </Card>
+  <Card title="Dashboard" href="/api/platform/dashboard">
+    Real-time KPIs, sales trends, inventory alerts, top tenants, and activity feed.
+  </Card>
+</CardGroup>
+
+## Common HTTP status codes
+
+| Code | Meaning |
+|------|---------|
+| `200 OK` | Request succeeded; body contains the requested resource. |
+| `204 No Content` | Mutation succeeded; no body returned. |
+| `400 Bad Request` | Invalid request body or query parameters. |
+| `401 Unauthorized` | Missing or invalid Bearer token. |
+| `403 Forbidden` | Token valid but caller lacks the `SuperAdmin` role. |
+| `404 Not Found` | The referenced tenant, store, or resource does not exist. |
+| `409 Conflict` | A uniqueness constraint was violated (e.g. duplicate slug). |

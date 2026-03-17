@@ -1,0 +1,452 @@
+---
+title: "Shifts"
+description: "Open, preview, and close POS cashier shifts. Track opening and closing cash amounts."
+---
+
+**Base path:** `/api/v1/pos/shifts`
+
+**Authentication required:** `TenantOrPlatform` + `PosOperator` policies. A tenant must be selected for all operations.
+
+## Shift lifecycle
+
+```
+Open shift  →  Process sales  →  Get close preview  →  Close shift
+     ↑                                                      ↓
+     └─────────────────── (new shift) ─────────────────────┘
+```
+
+A shift tracks the cashier, opening cash amount, all sales processed during the shift, and a closing cash count for reconciliation. Only one shift per store can be open at a time.
+
+---
+
+## Get current shift
+
+```
+GET /api/v1/pos/shifts/current
+```
+
+Returns the currently open shift for the authenticated tenant. Returns `204 No Content` if no shift is open.
+
+### Query parameters
+
+<ParamField query="storeId" type="string (uuid)">
+  Filter by store. Required when the tenant has multi-store enabled.
+</ParamField>
+
+### Response
+
+<ResponseField name="id" type="string (uuid)">
+  The shift ID.
+</ResponseField>
+
+<ResponseField name="openedAtUtc" type="string (ISO 8601)">
+  When the shift was opened.
+</ResponseField>
+
+<ResponseField name="openedByUserId" type="string (uuid)">
+  The user who opened the shift.
+</ResponseField>
+
+<ResponseField name="openedByEmail" type="string">
+  Email of the user who opened the shift.
+</ResponseField>
+
+<ResponseField name="openingCashAmount" type="decimal">
+  The cash amount counted when the shift was opened.
+</ResponseField>
+
+<ResponseField name="closedAtUtc" type="string (ISO 8601) | null">
+  When the shift was closed (`null` if still open).
+</ResponseField>
+
+<ResponseField name="closedByUserId" type="string (uuid) | null">
+  The user who closed the shift.
+</ResponseField>
+
+<ResponseField name="closedByEmail" type="string | null">
+  Email of the user who closed the shift.
+</ResponseField>
+
+<ResponseField name="closingCashAmount" type="decimal | null">
+  The cash amount counted at closing.
+</ResponseField>
+
+<ResponseField name="openNotes" type="string | null">
+  Notes recorded when opening the shift.
+</ResponseField>
+
+<ResponseField name="closeNotes" type="string | null">
+  Notes recorded when closing the shift.
+</ResponseField>
+
+<ResponseField name="storeId" type="string (uuid)">
+  The store this shift belongs to.
+</ResponseField>
+
+### Status codes
+
+| Code | Description |
+|---|---|
+| `200 OK` | An open shift was found. |
+| `204 No Content` | No shift is currently open. |
+| `401 Unauthorized` | Missing or invalid token. |
+
+### Example
+
+```bash curl
+curl https://api.cobranzadigital.com/api/v1/pos/shifts/current \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "X-Tenant-Id: <tenantId>"
+```
+
+---
+
+## Open a shift
+
+```
+POST /api/v1/pos/shifts/open
+```
+
+Opens a new cashier shift. Fails if a shift is already open for the store.
+
+### Request body
+
+<ParamField body="openingCashAmount" type="decimal">
+  The cash amount in the drawer at the start of the shift. Alias: `startingCashAmount`.
+</ParamField>
+
+<ParamField body="startingCashAmount" type="decimal">
+  Alias for `openingCashAmount`. If both are provided, `startingCashAmount` takes precedence.
+</ParamField>
+
+<ParamField body="notes" type="string">
+  Optional notes to record when opening the shift.
+</ParamField>
+
+<ParamField body="clientOperationId" type="string (uuid)">
+  Idempotency key for this open operation.
+</ParamField>
+
+<ParamField body="storeId" type="string (uuid)">
+  The store to open the shift for. Required in multi-store tenants.
+</ParamField>
+
+### Response
+
+Returns a `PosShiftDto` object (same shape as [Get current shift](#get-current-shift) response).
+
+### Status codes
+
+| Code | Description |
+|---|---|
+| `200 OK` | Shift opened successfully. |
+| `400 Bad Request` | A shift is already open for this store. |
+| `401 Unauthorized` | Missing or invalid token. |
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X POST https://api.cobranzadigital.com/api/v1/pos/shifts/open \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "X-Tenant-Id: <tenantId>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "openingCashAmount": 500.00,
+    "notes": "Morning shift start",
+    "storeId": "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+  }'
+```
+
+```json Response
+{
+  "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "openedAtUtc": "2026-03-17T08:00:00Z",
+  "openedByUserId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "openedByEmail": "cashier@tienda.mx",
+  "openingCashAmount": 500.00,
+  "closedAtUtc": null,
+  "closedByUserId": null,
+  "closedByEmail": null,
+  "closingCashAmount": null,
+  "openNotes": "Morning shift start",
+  "closeNotes": null,
+  "storeId": "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+}
+```
+</CodeGroup>
+
+---
+
+## Get close preview (GET)
+
+```
+GET /api/v1/pos/shifts/close-preview
+```
+
+Returns a summary of the current shift including expected cash amount and payment breakdown. Use this to show the cashier a reconciliation screen before actually closing.
+
+### Query parameters
+
+<ParamField query="shiftId" type="string (uuid)">
+  Specific shift to preview. Defaults to the currently open shift.
+</ParamField>
+
+<ParamField query="storeId" type="string (uuid)">
+  Filter by store. Required in multi-store tenants.
+</ParamField>
+
+### Response
+
+<ResponseField name="shiftId" type="string (uuid)">
+  The shift being previewed.
+</ResponseField>
+
+<ResponseField name="openedAtUtc" type="string (ISO 8601)">
+  When the shift was opened.
+</ResponseField>
+
+<ResponseField name="openingCashAmount" type="decimal">
+  Cash in the drawer at shift open.
+</ResponseField>
+
+<ResponseField name="salesCashTotal" type="decimal">
+  Total cash sales during the shift.
+</ResponseField>
+
+<ResponseField name="expectedCashAmount" type="decimal">
+  `openingCashAmount` + `salesCashTotal` — what should be in the drawer.
+</ResponseField>
+
+<ResponseField name="countedCashAmount" type="decimal | null">
+  Cash counted by the cashier (populated when a cash count is provided).
+</ResponseField>
+
+<ResponseField name="difference" type="decimal | null">
+  `countedCashAmount` − `expectedCashAmount`. Negative = shortage, positive = surplus.
+</ResponseField>
+
+<ResponseField name="lastCashCount" type="decimal | null">
+  The most recent cash count recorded for the shift.
+</ResponseField>
+
+<ResponseField name="breakdown" type="object">
+  Payment method breakdown for the shift.
+  <Expandable title="Breakdown fields">
+    <ResponseField name="breakdown.cashAmount" type="decimal">Total cash received.</ResponseField>
+    <ResponseField name="breakdown.cardAmount" type="decimal">Total card payments.</ResponseField>
+    <ResponseField name="breakdown.transferAmount" type="decimal">Total transfer payments.</ResponseField>
+    <ResponseField name="breakdown.totalSalesCount" type="integer">Number of sales in the shift.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example
+
+```bash curl
+curl "https://api.cobranzadigital.com/api/v1/pos/shifts/close-preview?storeId=f47ac10b-58cc-4372-a567-0e02b2c3d479" \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "X-Tenant-Id: <tenantId>"
+```
+
+---
+
+## Get close preview (POST, v2)
+
+```
+POST /api/v1/pos/shifts/close-preview
+```
+
+Same as the GET variant but accepts a request body, which allows including a preliminary cash count to see the expected difference before closing.
+
+### Request body
+
+<ParamField body="shiftId" type="string (uuid)">
+  Specific shift to preview.
+</ParamField>
+
+<ParamField body="cashCount" type="array">
+  Denomination-level cash count.
+  <Expandable title="Denomination object">
+    <ParamField body="cashCount[].denominationValue" type="decimal" required>
+      Face value of the denomination (e.g., `100.00` for a $100 bill).
+    </ParamField>
+    <ParamField body="cashCount[].count" type="integer" required>
+      Number of bills/coins of this denomination.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="storeId" type="string (uuid)">
+  The store ID.
+</ParamField>
+
+### Response
+
+Same shape as [GET close-preview](#get-close-preview-get).
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X POST https://api.cobranzadigital.com/api/v1/pos/shifts/close-preview \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "X-Tenant-Id: <tenantId>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "storeId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+    "cashCount": [
+      { "denominationValue": 500.00, "count": 2 },
+      { "denominationValue": 100.00, "count": 3 },
+      { "denominationValue": 50.00, "count": 4 }
+    ]
+  }'
+```
+
+```json Response
+{
+  "shiftId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "openedAtUtc": "2026-03-17T08:00:00Z",
+  "openingCashAmount": 500.00,
+  "salesCashTotal": 1250.00,
+  "expectedCashAmount": 1750.00,
+  "countedCashAmount": 1700.00,
+  "difference": -50.00,
+  "lastCashCount": 1700.00,
+  "breakdown": {
+    "cashAmount": 1250.00,
+    "cardAmount": 800.00,
+    "transferAmount": 150.00,
+    "totalSalesCount": 42
+  }
+}
+```
+</CodeGroup>
+
+---
+
+## Close a shift
+
+```
+POST /api/v1/pos/shifts/close
+```
+
+Closes the active shift and records the final cash count.
+
+### Request body
+
+<ParamField body="shiftId" type="string (uuid)">
+  The shift to close. Defaults to the currently open shift for the store.
+</ParamField>
+
+<ParamField body="countedDenominations" type="array">
+  Denomination breakdown of cash counted at close.
+  <Expandable title="Denomination object">
+    <ParamField body="countedDenominations[].denominationValue" type="decimal" required>
+      Face value of the denomination.
+    </ParamField>
+    <ParamField body="countedDenominations[].count" type="integer" required>
+      Number of bills/coins of this denomination.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="closingNotes" type="string">
+  Optional notes to record at shift close.
+</ParamField>
+
+<ParamField body="clientOperationId" type="string (uuid)">
+  Idempotency key for this close operation.
+</ParamField>
+
+<ParamField body="closeReason" type="string">
+  Optional reason for closing (e.g., `"EndOfDay"`, `"CashierChange"`).
+</ParamField>
+
+<ParamField body="storeId" type="string (uuid)">
+  The store ID. Required in multi-store tenants.
+</ParamField>
+
+### Response
+
+<ResponseField name="shiftId" type="string (uuid)">
+  The closed shift ID.
+</ResponseField>
+
+<ResponseField name="openedAtUtc" type="string (ISO 8601)">
+  When the shift was opened.
+</ResponseField>
+
+<ResponseField name="closedAtUtc" type="string (ISO 8601)">
+  When the shift was closed.
+</ResponseField>
+
+<ResponseField name="openingCashAmount" type="decimal">
+  Cash at shift open.
+</ResponseField>
+
+<ResponseField name="salesCashTotal" type="decimal">
+  Total cash collected from sales.
+</ResponseField>
+
+<ResponseField name="expectedCashAmount" type="decimal">
+  Expected cash in the drawer.
+</ResponseField>
+
+<ResponseField name="countedCashAmount" type="decimal">
+  Actual cash counted by the cashier.
+</ResponseField>
+
+<ResponseField name="difference" type="decimal">
+  Cash difference (`countedCashAmount` − `expectedCashAmount`).
+</ResponseField>
+
+<ResponseField name="closeNotes" type="string | null">
+  Notes recorded at close.
+</ResponseField>
+
+<ResponseField name="closeReason" type="string | null">
+  The reason the shift was closed.
+</ResponseField>
+
+### Status codes
+
+| Code | Description |
+|---|---|
+| `200 OK` | Shift closed successfully. |
+| `400 Bad Request` | No open shift found or shift already closed. |
+| `401 Unauthorized` | Missing or invalid token. |
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X POST https://api.cobranzadigital.com/api/v1/pos/shifts/close \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "X-Tenant-Id: <tenantId>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "storeId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+    "countedDenominations": [
+      { "denominationValue": 500.00, "count": 2 },
+      { "denominationValue": 100.00, "count": 3 }
+    ],
+    "closingNotes": "End of day close",
+    "closeReason": "EndOfDay"
+  }'
+```
+
+```json Response
+{
+  "shiftId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "openedAtUtc": "2026-03-17T08:00:00Z",
+  "closedAtUtc": "2026-03-17T20:00:00Z",
+  "openingCashAmount": 500.00,
+  "salesCashTotal": 1250.00,
+  "expectedCashAmount": 1750.00,
+  "countedCashAmount": 1700.00,
+  "difference": -50.00,
+  "closeNotes": "End of day close",
+  "closeReason": "EndOfDay"
+}
+```
+</CodeGroup>

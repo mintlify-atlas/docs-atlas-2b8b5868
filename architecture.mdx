@@ -1,0 +1,122 @@
+---
+title: Architecture
+description: An overview of CobranzaDigital's frontend, backend, and database layers, including Clean Architecture, Angular feature modules, multi-tenancy design, and API versioning.
+---
+
+## System overview
+
+CobranzaDigital is a multi-tenant SaaS POS platform composed of three main layers:
+
+| Layer | Technology | Responsibility |
+|-------|------------|----------------|
+| Frontend | Angular 21 | Single-page application for POS operations, admin, and platform management |
+| Backend | .NET 10, ASP.NET Core | REST API handling business logic, identity, and data access |
+| Database | SQL Server | Persistent storage for tenants, stores, sales, shifts, and users |
+
+```
+┌─────────────────────────────────────────────┐
+│            Angular 21 SPA (frontend)         │
+│  /login  /register  /app/**                 │
+└────────────────────┬────────────────────────┘
+                     │ HTTP (REST, Bearer JWT)
+                     │ /api/v1/**
+┌────────────────────▼────────────────────────┐
+│         ASP.NET Core API (backend)           │
+│  Controllers → Application → Infrastructure │
+└────────────────────┬────────────────────────┘
+                     │ Entity Framework Core
+┌────────────────────▼────────────────────────┐
+│               SQL Server                    │
+│  CobranzaDigital database                   │
+└─────────────────────────────────────────────┘
+```
+
+## Backend: Clean Architecture layers
+
+The backend solution follows Clean Architecture with four projects:
+
+| Project | Namespace | Contents |
+|---------|-----------|----------|
+| `CobranzaDigital.Domain` | `CobranzaDigital.Domain` | Entities (`Tenant`, `Store`, `Sale`, `PosShift`, `Payment`, etc.), enums (`SaleStatus`, `PaymentMethod`, `VoidReasonCode`), and domain interfaces |
+| `CobranzaDigital.Application` | `CobranzaDigital.Application` | Use cases, service interfaces (`IIdentityService`, `ITokenService`), application options (`JwtOptions`), and contracts (request/response DTOs) |
+| `CobranzaDigital.Infrastructure` | `CobranzaDigital.Infrastructure` | Entity Framework `CobranzaDigitalDbContext`, Identity implementation, JWT token service, tenant context service, POS store context service, and seeding |
+| `CobranzaDigital.Api` | `CobranzaDigital.Api` | ASP.NET Core controllers, middleware, authorization policies, Swagger configuration, and the application entry point (`Program.cs`) |
+
+### Dependency flow
+
+```
+Api  →  Application  →  Domain
+         ↑
+  Infrastructure
+```
+
+The `Domain` and `Application` layers have no dependency on infrastructure concerns. `Infrastructure` implements the interfaces defined in `Application`.
+
+## Backend: cross-cutting concerns
+
+| Concern | Implementation |
+|---------|----------------|
+| Authentication | JWT Bearer tokens issued by `JwtTokenService`; access token (15 min) + refresh token (7 days) |
+| Authorization | Policy-based; policies defined in `AuthorizationPolicies.cs` and registered in `Program.cs` |
+| Tenant isolation | `ITenantContext` resolves the effective tenant from the `tenantId` JWT claim or the `X-Tenant-Id` header (SuperAdmin only) |
+| Rate limiting | Fixed-window per client IP; 100 requests / 60 seconds by default |
+| Observability | Structured JSON console logging; correlation ID middleware; trace ID in `ProblemDetails` |
+| Health checks | `/health`, `/health/live`, `/health/ready` (includes `CobranzaDigitalDbContext` DB check) |
+| Data protection | ASP.NET Core Data Protection with keys persisted to `/var/www/cobranzadigital/api/keys` |
+| CORS | Origins configured via `Cors:AllowedOrigins` in `appsettings.json` |
+
+## Frontend: Angular feature module structure
+
+The Angular app uses standalone components organized into lazy-loaded feature modules. All authenticated routes live under the `/app` prefix and are protected by `authGuard`.
+
+```
+src/app/
+├── app.routes.ts          Root routes (/login, /register, /app)
+├── core/
+│   ├── guards/            authGuard, roleGuard
+│   ├── http/              authInterceptor, refreshTokenInterceptor,
+│   │                      platformTenantInterceptor, errorInterceptor
+│   └── services/          ApiClient, GlobalErrorService
+└── features/
+    ├── auth/              Login and registration pages + AuthService
+    ├── app-shell/         Persistent shell layout + child route definitions
+    ├── admin/             User and role administration (/app/admin)
+    ├── platform/          SuperAdmin-only tenant/vertical management (/app/platform)
+    ├── pos/               POS operations: caja, shifts, reports (/app/pos)
+    └── weather-forecast/  Dashboard page (/app/dashboard)
+```
+
+### App shell routes
+
+| Path | Guard | Allowed roles |
+|------|-------|---------------|
+| `/app/dashboard` | `authGuard` | All authenticated users |
+| `/app/admin/**` | `authGuard` | Varies by child route |
+| `/app/platform/**` | `roleGuard(['SuperAdmin'])` | `SuperAdmin` only |
+| `/app/pos/**` | `roleGuard(['AdminStore', 'Cashier', 'Manager'])` | `AdminStore`, `Cashier`, `Manager` |
+
+Unmatched routes redirect to `/login`.
+
+## API versioning
+
+All API endpoints use URL-segment versioning. The current version is **v1**.
+
+```
+GET  /api/v1/auth/login
+POST /api/v1/pos/sales
+GET  /api/v1/platform/tenants
+```
+
+Controllers declare their version with `[ApiVersion("1.0")]` and the route template `api/v{version:apiVersion}/...`. Swagger UI reflects all versioned endpoints when `Swagger:Enabled` is `true`.
+
+## Multi-tenant design (overview)
+
+The platform is organized into three levels:
+
+| Level | Entity | Description |
+|-------|--------|-------------|
+| Platform | — | Global level managed by `SuperAdmin`; spans all tenants |
+| Tenant | `Tenant` | A client organization with a `slug`, belonging to a `Vertical` |
+| Store | `Store` | An operational branch of a tenant; stores carry `TenantId` for isolation |
+
+Sales (`Sale`), shifts (`PosShift`), and stores (`Store`) all persist a `TenantId` column. The backend enforces tenant boundaries through `ITenantContext` on every request. See [Multi-Tenancy](/concepts/multi-tenancy) for the full isolation model.

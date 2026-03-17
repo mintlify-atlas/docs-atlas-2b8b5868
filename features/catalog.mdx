@@ -1,0 +1,235 @@
+---
+title: Product Catalog
+description: Structure of the CobranzaDigital product catalog — categories, products, customization schemas, option groups, extras, and how they appear in the POS snapshot.
+---
+
+## Overview
+
+The CobranzaDigital catalog is a multi-tenant, template-based hierarchy. A **CatalogTemplate** owned by a vertical is the master source; each tenant is assigned to one template. Tenants can override item availability and stores can further control per-store availability — all without duplicating the base catalog.
+
+<CardGroup cols={2}>
+  <Card title="Read-Only (POS operators)" icon="eye">
+    `GET /api/v1/pos/catalog/snapshot` — full snapshot for the POS register
+  </Card>
+  <Card title="Admin Management" icon="pencil">
+    `api/v1/pos/admin/*` — CRUD for categories, products, schemas, option sets, extras
+  </Card>
+</CardGroup>
+
+---
+
+## Catalog Hierarchy
+
+```
+CatalogTemplate (per vertical)
+└── Category  (categoryCode, sortOrder)
+    └── Product  (basePrice, isInventoryTracked, customizationSchemaId)
+        └── CustomizationSchema  (optional, linked via customizationSchemaId)
+            └── SelectionGroup  (groupKey, label, SelectionMode, minSelections, maxSelections)
+                └── OptionSet → OptionItem[]  (name, sortOrder, priceDelta)
+Extra  (flat, tenant-level, price, isInventoryTracked)
+IncludedItem  (Product ↔ Extra, default quantity)
+```
+
+---
+
+## Core Entities
+
+<Tabs>
+  <Tab title="Category">
+    Defined in `PosCatalogEntities.cs`. Groups products in the POS grid.
+
+    | Field | Type | Notes |
+    |-------|------|-------|
+    | `CategoryCode` | `string` | Human-readable code (e.g., `BEBIDAS`) |
+    | `Name` | `string` | Display name |
+    | `SortOrder` | `int` | Display order in POS |
+    | `IsActive` | `bool` | Structural enable/disable |
+  </Tab>
+
+  <Tab title="Product">
+    | Field | Type | Notes |
+    |-------|------|-------|
+    | `ExternalCode` | `string?` | SKU from external system |
+    | `Name` | `string` | Display name |
+    | `CategoryId` | `Guid` | FK to Category |
+    | `SubcategoryName` | `string?` | Optional sub-grouping label |
+    | `BasePrice` | `decimal` | Default unit price |
+    | `IsActive` | `bool` | Structural toggle |
+    | `IsAvailable` | `bool` | Operational availability (can change in real time) |
+    | `IsInventoryTracked` | `bool` | Whether sales consume stock |
+    | `CustomizationSchemaId` | `Guid?` | Links product to a customization schema |
+  </Tab>
+
+  <Tab title="Extra">
+    Add-ons that can be applied to any product.
+
+    | Field | Type | Notes |
+    |-------|------|-------|
+    | `Name` | `string` | Display name |
+    | `Price` | `decimal` | Per-unit price |
+    | `IsActive` | `bool` | Structural toggle |
+    | `IsAvailable` | `bool` | Operational availability |
+    | `IsInventoryTracked` | `bool` | Whether sales consume stock |
+  </Tab>
+
+  <Tab title="SelectionGroup">
+    Drives the customization modal in the POS.
+
+    | Field | Type | Notes |
+    |-------|------|-------|
+    | `Key` | `string` | Machine key (e.g., `milk`, `size`) |
+    | `Label` | `string` | Display label shown to cashier |
+    | `SelectionMode` | `Single` \| `Multi` | Whether one or many options can be selected |
+    | `MinSelections` | `int` | Minimum required selections |
+    | `MaxSelections` | `int` | Maximum allowed selections |
+    | `OptionSetId` | `Guid` | The pool of `OptionItem` choices |
+    | `SortOrder` | `int` | Display order |
+  </Tab>
+</Tabs>
+
+---
+
+## isActive vs isAvailable
+
+<CardGroup cols={2}>
+  <Card title="isActive" icon="toggle-on">
+    Structural — set by admin. Inactive items are permanently hidden from the POS. Deactivation is a soft-delete (no hard `DELETE`).
+  </Card>
+  <Card title="isAvailable" icon="clock">
+    Operational — can change in real time (e.g., a topping runs out mid-shift). Unavailable items appear in the POS grid with an **Agotado** badge and block interaction.
+  </Card>
+</CardGroup>
+
+---
+
+## How Customizable Products Work
+
+A product with a `customizationSchemaId` triggers the customization modal when tapped.
+
+<Steps>
+  <Step title="Schema lookup">
+    The POS snapshot includes all `SelectionGroup` entries keyed by `schemaId`. The page filters groups matching `product.customizationSchemaId`.
+  </Step>
+  <Step title="Option set rendering">
+    Each `SelectionGroup` has a `label`, a `selectionMode` (`Single = 0` / `Multi = 1`), and `minSelections`/`maxSelections` constraints. The modal renders one group per section.
+  </Step>
+  <Step title="Selection validation">
+    The cashier must satisfy min/max constraints. On confirm, each chosen `OptionItem` is captured as a `CartSelection` with `{ groupKey, optionItemId, optionItemName }`.
+  </Step>
+  <Step title="Extras selection">
+    After selections, the cashier can add any available `Extra` with a quantity. Each is captured as a `CartExtra` with `{ extraId, quantity, extraName, unitPrice }`.
+  </Step>
+</Steps>
+
+---
+
+## POS Catalog Snapshot (V1)
+
+**Endpoint:** `GET /api/v1/pos/catalog/snapshot?storeId={optional}`
+
+Returns the full resolved catalog for the POS register. The response shape (`CatalogSnapshotDto`) includes:
+
+```typescript
+{
+  storeId: string;
+  timeZoneId: string;
+  generatedAtUtc: string;
+  catalogVersion: string;
+  etagSeed: string;
+  categories: CategoryDto[];
+  products: ProductDto[];        // includes availabilityReason, storeOverrideState, isInventoryTracked, stockOnHandQty
+  optionSets: OptionSetDto[];
+  optionItems: OptionItemDto[];  // includes availabilityReason, storeOverrideState
+  schemas: SchemaDto[];
+  selectionGroups: SelectionGroupDto[];
+  extras: ExtraDto[];            // includes availabilityReason, storeOverrideState, isInventoryTracked, stockOnHandQty
+  includedItems: IncludedItemDto[];
+  overrides: ProductOverrideDto[];
+}
+```
+
+### Effective Availability Precedence
+
+For each product, extra, or option item, availability is resolved in this order:
+
+1. **`DisabledByTenant`** — tenant override has `isEnabled=false`
+2. **`DisabledByStore`** — store override state is `Disabled`
+3. **`ManualUnavailable`** — `IsAvailable=false` on the base record
+4. **`OutOfStock`** — `IsInventoryTracked=true` and `OnHandQty ≤ 0` (products and extras only)
+5. **Available** — none of the above
+
+### ETag Caching
+
+The snapshot endpoint uses HTTP caching to avoid unnecessary data transfer:
+
+- **`Cache-Control: public, max-age=60`** — allows CDN and browser caching for 60 seconds.
+- **`ETag`** — SHA-256 hash of all catalog content including `isAvailable`, overrides, inventory, and group memberships.
+- **`If-None-Match`** — clients send the cached ETag; the server returns `304 Not Modified` when nothing changed.
+
+The Angular `PosCatalogSnapshotService` persists snapshots in `localStorage` keyed by `storeId`, sends `If-None-Match`, and handles `304` by reusing the cached snapshot.
+
+---
+
+## Admin Catalog Management (V1)
+
+**Requires:** `PosAdmin` policy  
+**Base route:** `api/v1/pos/admin`
+
+Full CRUD is available for all catalog entities:
+
+| Resource | Endpoints |
+|----------|-----------|
+| Categories | `GET`, `POST`, `PUT /{id}`, `DELETE /{id}` |
+| Products | `GET`, `POST`, `PUT /{id}`, `DELETE /{id}` |
+| Option Sets | `GET`, `POST`, `PUT /{id}`, `DELETE /{id}` |
+| Option Items | `GET /option-sets/{id}/items`, `POST`, `PUT`, `DELETE` |
+| Schemas | `GET`, `POST`, `PUT /{id}`, `DELETE /{id}` |
+| Selection Groups | `GET /schemas/{id}/groups`, `POST`, `PUT`, `DELETE` |
+| Extras | `GET`, `POST`, `PUT /{id}`, `DELETE /{id}` |
+| Included Items | `GET /products/{id}/included-items`, `PUT` (replace all) |
+| Product Group Overrides | `PUT /products/{id}/overrides/{groupKey}` |
+
+`DELETE` operations are soft-deletes that set `IsActive=false`. Pass `includeInactive=true` to list them.
+
+### Store & Tenant Overrides
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /admin/catalog/overrides?type=` | List tenant-level enable/disable overrides |
+| `PUT /admin/catalog/overrides` | Upsert a tenant override |
+| `GET /admin/catalog/availability?storeId=` | List store availability overrides |
+| `PUT /admin/catalog/availability` | Upsert a store availability override |
+| `GET /admin/catalog/store-overrides?storeId=` | List store-level Enabled/Disabled overrides |
+| `PUT /admin/catalog/store-overrides` | Upsert a store override (`Enabled` or `Disabled`) |
+| `DELETE /admin/catalog/store-overrides` | Remove override (item reverts to template inheritance) |
+
+---
+
+## Catalog V2 Endpoints — Bulk Import / Export
+
+**Requires:** `PosAdmin` policy, API version `2.0`  
+**Route prefix:** `api/v2/pos/catalog`
+
+V2 adds bulk CSV import/export for catalog administration. All CSV exports are capped at **50,000 rows**; the server returns `413 Payload Too Large` if the result would exceed that.
+
+<Tabs>
+  <Tab title="Categories">
+    | Endpoint | Description |
+    |----------|-------------|
+    | `GET /categories/export` | Download `categories-export.csv` with columns: `categoryCode, name, sortOrder, updatedAtUtc` |
+    | `POST /categories/import/validate` | Dry-run validation of a category import batch |
+    | `POST /categories/import/apply` | Apply a validated category import batch |
+  </Tab>
+  <Tab title="Products">
+    | Endpoint | Description |
+    |----------|-------------|
+    | `GET /products/export` | Download `products-export.csv` with columns: `externalCode, name, categoryCode, basePrice, isActive, isAvailable, isInventoryTracked, subcategoryName, updatedAtUtc` |
+    | `POST /products/import/validate` | Dry-run validation of a product import batch |
+    | `POST /products/import/apply` | Apply a validated product import batch |
+  </Tab>
+</Tabs>
+
+<Note>
+  V2 catalog endpoints require `[RequireTenantSelectionForOperation]` — a tenant must be explicitly selected in the request context before calling them.
+</Note>

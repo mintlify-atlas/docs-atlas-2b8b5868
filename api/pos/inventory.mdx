@@ -1,0 +1,447 @@
+---
+title: "Inventory"
+description: "Validate product availability and manage inventory balances, movements, and adjustments."
+---
+
+## Overview
+
+The inventory API has two version tracks:
+
+| Version | Path prefix | Policy | Purpose |
+|---|---|---|---|
+| v1 | `/api/v1/pos/inventory` | `PosOperator` | Validate stock availability before creating a sale |
+| v2 | `/api/v2/pos/inventory` | `PosAdmin` | Full inventory management — balances, movements, adjustments |
+
+<Note>
+The v2 endpoints require the `inventory.v2.enabled` feature flag to be active for the tenant.
+</Note>
+
+---
+
+## Validate availability (v1)
+
+```
+POST /api/v1/pos/inventory/validate-availability
+```
+
+Checks whether the requested quantities of products are available in stock. Use this before creating a sale to surface out-of-stock conditions to the cashier.
+
+**Authentication:** `TenantOrPlatform` + `PosOperator`
+
+### Request body
+
+<ParamField body="storeId" type="string (uuid)" required>
+  The store to check inventory at.
+</ParamField>
+
+<ParamField body="lines" type="array" required>
+  Products to validate.
+  <Expandable title="Line object">
+    <ParamField body="lines[].productId" type="string (uuid)">
+      Product ID. Provide either `productId` or `externalCode`.
+    </ParamField>
+    <ParamField body="lines[].externalCode" type="string">
+      Product external code / SKU. Alternative to `productId`.
+    </ParamField>
+    <ParamField body="lines[].qty" type="decimal" required>
+      Quantity requested.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Response
+
+<ResponseField name="ok" type="boolean">
+  `true` if all lines have sufficient stock.
+</ResponseField>
+
+<ResponseField name="lines" type="array">
+  Per-line availability result.
+  <Expandable title="Line result">
+    <ResponseField name="productId" type="string (uuid) | null">Resolved product ID.</ResponseField>
+    <ResponseField name="externalCode" type="string | null">External code used for lookup.</ResponseField>
+    <ResponseField name="requestedQty" type="decimal">Quantity requested.</ResponseField>
+    <ResponseField name="onHandQty" type="decimal">Current stock on hand.</ResponseField>
+    <ResponseField name="ok" type="boolean">Whether this line has sufficient stock.</ResponseField>
+    <ResponseField name="message" type="string | null">Reason if not available.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="summary" type="object">
+  <Expandable title="Summary">
+    <ResponseField name="insufficientCount" type="integer">Number of lines with insufficient stock.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X POST https://api.cobranzadigital.com/api/v1/pos/inventory/validate-availability \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "X-Tenant-Id: <tenantId>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "storeId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+    "lines": [
+      { "productId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890", "qty": 3 },
+      { "externalCode": "CAFE-001", "qty": 1 }
+    ]
+  }'
+```
+
+```json Response
+{
+  "ok": false,
+  "lines": [
+    {
+      "productId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "externalCode": null,
+      "requestedQty": 3,
+      "onHandQty": 1,
+      "ok": false,
+      "message": "Insufficient stock"
+    },
+    {
+      "productId": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+      "externalCode": "CAFE-001",
+      "requestedQty": 1,
+      "onHandQty": 50,
+      "ok": true,
+      "message": null
+    }
+  ],
+  "summary": {
+    "insufficientCount": 1
+  }
+}
+```
+</CodeGroup>
+
+---
+
+## Get inventory balances (v2)
+
+```
+GET /api/v2/pos/inventory/balances
+```
+
+Returns paginated inventory balances for a store. **Authentication:** `TenantOrPlatform` + `PosAdmin`.
+
+### Query parameters
+
+<ParamField query="storeId" type="string (uuid)" required>
+  The store to query.
+</ParamField>
+
+<ParamField query="q" type="string">
+  Free-text search across item name and SKU.
+</ParamField>
+
+<ParamField query="categoryId" type="string (uuid)">
+  Filter by category.
+</ParamField>
+
+<ParamField query="tracked" type="boolean">
+  `true` to show only inventory-tracked items; `false` for untracked only.
+</ParamField>
+
+<ParamField query="onHandMin" type="decimal">
+  Minimum on-hand quantity filter.
+</ParamField>
+
+<ParamField query="onHandMax" type="decimal">
+  Maximum on-hand quantity filter.
+</ParamField>
+
+<ParamField query="page" type="integer" default="1">
+  Page number (1-based).
+</ParamField>
+
+<ParamField query="pageSize" type="integer" default="25">
+  Results per page.
+</ParamField>
+
+### Response
+
+<ResponseField name="items" type="array">
+  <Expandable title="Balance row">
+    <ResponseField name="itemType" type="string">`"Product"`, `"Extra"`, or `"OptionItem"`.</ResponseField>
+    <ResponseField name="itemId" type="string (uuid)">Item ID.</ResponseField>
+    <ResponseField name="name" type="string">Item name.</ResponseField>
+    <ResponseField name="sku" type="string | null">External code / SKU.</ResponseField>
+    <ResponseField name="categoryName" type="string | null">Category name.</ResponseField>
+    <ResponseField name="isInventoryTracked" type="boolean">Whether this item has inventory tracking enabled.</ResponseField>
+    <ResponseField name="onHandQty" type="decimal">Current quantity on hand.</ResponseField>
+    <ResponseField name="updatedAtUtc" type="string (ISO 8601) | null">Last adjustment timestamp.</ResponseField>
+    <ResponseField name="balanceVersion" type="string | null">Optimistic concurrency version.</ResponseField>
+  </Expandable>
+</ResponseField>
+<ResponseField name="totalCount" type="integer">Total matching records.</ResponseField>
+<ResponseField name="page" type="integer">Current page.</ResponseField>
+<ResponseField name="pageSize" type="integer">Page size.</ResponseField>
+
+---
+
+## Export inventory balances (v2)
+
+```
+GET /api/v2/pos/inventory/balances/export
+```
+
+Downloads inventory balances as CSV. Accepts the same filter query parameters as [Get inventory balances](#get-inventory-balances-v2) (except `page` and `pageSize`).
+
+**Response:** `text/csv` with columns: `ItemType`, `ExternalCode`, `Name`, `CategoryName`, `IsInventoryTracked`, `OnHandQty`, `UpdatedAtUtc`.
+
+**Limit:** 50,000 rows.
+
+```bash curl
+curl "https://api.cobranzadigital.com/api/v2/pos/inventory/balances/export?storeId=f47ac10b-58cc-4372-a567-0e02b2c3d479" \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "X-Tenant-Id: <tenantId>" \
+  -o inventory-balances.csv
+```
+
+---
+
+## Get inventory movements (v2)
+
+```
+GET /api/v2/pos/inventory/movements
+```
+
+Returns paginated movement history for a specific item.
+
+### Query parameters
+
+<ParamField query="storeId" type="string (uuid)" required>
+  The store.
+</ParamField>
+
+<ParamField query="itemType" type="string" required>
+  `"Product"`, `"Extra"`, or `"OptionItem"`.
+</ParamField>
+
+<ParamField query="itemId" type="string (uuid)" required>
+  The item to retrieve movements for.
+</ParamField>
+
+<ParamField query="from" type="string (ISO 8601)">
+  Filter movements on or after this timestamp.
+</ParamField>
+
+<ParamField query="to" type="string (ISO 8601)">
+  Filter movements on or before this timestamp.
+</ParamField>
+
+<ParamField query="reason" type="string">
+  Filter by reason code (e.g., `"SaleConsumption"`, `"ManualCount"`).
+</ParamField>
+
+<ParamField query="referenceType" type="string">
+  Filter by reference type.
+</ParamField>
+
+<ParamField query="referenceId" type="string">
+  Filter by reference ID.
+</ParamField>
+
+<ParamField query="createdByUserId" type="string (uuid)">
+  Filter by the user who created the movement.
+</ParamField>
+
+<ParamField query="page" type="integer" default="1">Page number.</ParamField>
+<ParamField query="pageSize" type="integer" default="25">Results per page.</ParamField>
+
+### Response
+
+<ResponseField name="items" type="array">
+  <Expandable title="Movement row">
+    <ResponseField name="movementId" type="string (uuid)">Movement record ID.</ResponseField>
+    <ResponseField name="occurredAtUtc" type="string (ISO 8601)">When the movement occurred.</ResponseField>
+    <ResponseField name="reasonCode" type="string">Reason for the movement (e.g., `"SaleConsumption"`, `"ManualCount"`, `"Purchase"`).</ResponseField>
+    <ResponseField name="referenceType" type="string | null">Optional reference type (e.g., `"Sale"`).</ResponseField>
+    <ResponseField name="referenceId" type="string | null">Optional reference ID.</ResponseField>
+    <ResponseField name="note" type="string | null">Free-text note.</ResponseField>
+    <ResponseField name="createdByUserId" type="string (uuid) | null">User who created the movement.</ResponseField>
+    <ResponseField name="createdByDisplayName" type="string | null">Display name of the user.</ResponseField>
+    <ResponseField name="deltaQty" type="decimal">Quantity change (negative = decrease).</ResponseField>
+    <ResponseField name="qtyBefore" type="decimal">Quantity before the movement.</ResponseField>
+    <ResponseField name="qtyAfter" type="decimal">Quantity after the movement.</ResponseField>
+    <ResponseField name="clientOperationId" type="string | null">Client idempotency key.</ResponseField>
+    <ResponseField name="hasAnomaly" type="boolean">Whether an anomaly was detected on this movement.</ResponseField>
+  </Expandable>
+</ResponseField>
+<ResponseField name="totalCount" type="integer">Total matching records.</ResponseField>
+<ResponseField name="page" type="integer">Current page.</ResponseField>
+<ResponseField name="pageSize" type="integer">Page size.</ResponseField>
+
+---
+
+## Create adjustment (v2)
+
+```
+POST /api/v2/pos/inventory/adjustments
+```
+
+Creates a single inventory adjustment for one item.
+
+### Request body
+
+<ParamField body="storeId" type="string (uuid)" required>The store.</ParamField>
+<ParamField body="itemType" type="string" required>`"Product"`, `"Extra"`, or `"OptionItem"`.</ParamField>
+<ParamField body="itemId" type="string (uuid)" required>The item to adjust.</ParamField>
+<ParamField body="operationType" type="string" required>
+  `"Delta"` to add/subtract a quantity, or `"Set"` to set the quantity to an absolute value.
+</ParamField>
+<ParamField body="quantityDelta" type="decimal">
+  The change in quantity. Required when `operationType` is `"Delta"`. Negative values decrease stock.
+</ParamField>
+<ParamField body="quantitySet" type="decimal">
+  The absolute quantity to set. Required when `operationType` is `"Set"`.
+</ParamField>
+<ParamField body="reasonCode" type="string" required>
+  Reason for the adjustment. Valid values: `InitialLoad`, `Purchase`, `Return`, `Waste`, `Damage`, `Correction`, `TransferIn`, `TransferOut`, `ManualCount`.
+</ParamField>
+<ParamField body="reference" type="string">Optional external reference.</ParamField>
+<ParamField body="note" type="string">Free-text note.</ParamField>
+<ParamField body="clientOperationId" type="string" required>Idempotency key for this adjustment.</ParamField>
+<ParamField body="expectedVersion" type="string">Optimistic concurrency version from `balanceVersion` field. If provided and mismatched, the request fails.</ParamField>
+
+### Response
+
+<ResponseField name="adjustmentId" type="string (uuid)">ID of the created adjustment record.</ResponseField>
+<ResponseField name="storeId" type="string (uuid)">Store.</ResponseField>
+<ResponseField name="itemType" type="string">Item type.</ResponseField>
+<ResponseField name="itemId" type="string (uuid)">Item ID.</ResponseField>
+<ResponseField name="qtyBefore" type="decimal">Quantity before the adjustment.</ResponseField>
+<ResponseField name="qtyAfter" type="decimal">Quantity after the adjustment.</ResponseField>
+<ResponseField name="deltaApplied" type="decimal">Actual delta applied.</ResponseField>
+<ResponseField name="balanceVersion" type="string">New concurrency version.</ResponseField>
+<ResponseField name="createdAtUtc" type="string (ISO 8601)">When the adjustment was recorded.</ResponseField>
+<ResponseField name="reasonCode" type="string">Reason code.</ResponseField>
+<ResponseField name="reference" type="string | null">External reference.</ResponseField>
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X POST https://api.cobranzadigital.com/api/v2/pos/inventory/adjustments \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "X-Tenant-Id: <tenantId>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "storeId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+    "itemType": "Product",
+    "itemId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "operationType": "Delta",
+    "quantityDelta": 10,
+    "reasonCode": "Purchase",
+    "reference": "PO-2026-001",
+    "clientOperationId": "inv-adj-001"
+  }'
+```
+
+```json Response
+{
+  "adjustmentId": "7b4e3a2c-1d5e-4f6a-8b9c-0d1e2f3a4b5c",
+  "storeId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "itemType": "Product",
+  "itemId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "qtyBefore": 5,
+  "qtyAfter": 15,
+  "deltaApplied": 10,
+  "balanceVersion": "v-xyz789",
+  "createdAtUtc": "2026-03-17T10:00:00Z",
+  "reasonCode": "Purchase",
+  "reference": "PO-2026-001"
+}
+```
+</CodeGroup>
+
+---
+
+## Validate adjustment batch (v2)
+
+```
+POST /api/v2/pos/inventory/adjustments/batch/validate
+```
+
+Validates a batch of adjustments without committing. Use before [Apply batch](#create-adjustment-batch-v2).
+
+### Request body
+
+Same as [Create adjustment batch](#create-adjustment-batch-v2).
+
+### Response
+
+<ResponseField name="storeId" type="string (uuid)">Store ID.</ResponseField>
+<ResponseField name="totalLines" type="integer">Lines submitted.</ResponseField>
+<ResponseField name="validCount" type="integer">Valid lines.</ResponseField>
+<ResponseField name="invalidCount" type="integer">Invalid lines.</ResponseField>
+<ResponseField name="lines" type="array">
+  <Expandable title="Validation line result">
+    <ResponseField name="lineNo" type="integer">Line number.</ResponseField>
+    <ResponseField name="itemType" type="string">Resolved item type.</ResponseField>
+    <ResponseField name="externalCode" type="string | null">External code if used for lookup.</ResponseField>
+    <ResponseField name="itemId" type="string (uuid) | null">Resolved item ID.</ResponseField>
+    <ResponseField name="status" type="string">`"Valid"` or `"Invalid"`.</ResponseField>
+    <ResponseField name="errorCode" type="string | null">Error code if invalid.</ResponseField>
+    <ResponseField name="message" type="string | null">Error message.</ResponseField>
+    <ResponseField name="qtyBefore" type="decimal | null">Current stock.</ResponseField>
+    <ResponseField name="qtyAfter" type="decimal | null">Projected stock after adjustment.</ResponseField>
+    <ResponseField name="deltaQtyNormalized" type="decimal | null">Normalized delta.</ResponseField>
+    <ResponseField name="itemResolvedId" type="string (uuid) | null">Resolved item ID.</ResponseField>
+    <ResponseField name="itemName" type="string | null">Item display name.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## Create adjustment batch (v2)
+
+```
+POST /api/v2/pos/inventory/adjustments/batch
+```
+
+Applies multiple inventory adjustments in a single atomic batch.
+
+### Request body
+
+<ParamField body="storeId" type="string (uuid)" required>The store.</ParamField>
+<ParamField body="reasonCode" type="string" required>Reason code applied to all lines.</ParamField>
+<ParamField body="referenceType" type="string">Optional reference type for all lines.</ParamField>
+<ParamField body="referenceId" type="string">Optional reference ID.</ParamField>
+<ParamField body="note" type="string">Batch-level note.</ParamField>
+<ParamField body="batchClientOperationId" type="string (uuid)" required>Idempotency key for the entire batch.</ParamField>
+<ParamField body="lines" type="array" required>
+  <Expandable title="Batch line">
+    <ParamField body="lines[].lineNo" type="integer" required>1-based line number.</ParamField>
+    <ParamField body="lines[].itemType" type="string" required>`"Product"`, `"Extra"`, or `"OptionItem"`.</ParamField>
+    <ParamField body="lines[].externalCode" type="string">SKU for item lookup (alternative to `itemId`).</ParamField>
+    <ParamField body="lines[].itemId" type="string (uuid)">Item ID (alternative to `externalCode`).</ParamField>
+    <ParamField body="lines[].deltaQty" type="decimal" required>Quantity to add (positive) or remove (negative).</ParamField>
+    <ParamField body="lines[].lineClientOperationId" type="string (uuid)">Per-line idempotency key.</ParamField>
+  </Expandable>
+</ParamField>
+
+### Response
+
+<ResponseField name="batchClientOperationId" type="string (uuid)">The batch key.</ResponseField>
+<ResponseField name="appliedCount" type="integer">Lines successfully applied.</ResponseField>
+<ResponseField name="failedCount" type="integer">Lines that failed.</ResponseField>
+<ResponseField name="lines" type="array">
+  <Expandable title="Batch line result">
+    <ResponseField name="lineNo" type="integer">Line number.</ResponseField>
+    <ResponseField name="itemType" type="string">Item type.</ResponseField>
+    <ResponseField name="externalCode" type="string | null">External code.</ResponseField>
+    <ResponseField name="itemId" type="string (uuid) | null">Item ID.</ResponseField>
+    <ResponseField name="status" type="string">`"Applied"` or `"Failed"`.</ResponseField>
+    <ResponseField name="errorCode" type="string | null">Error code if failed.</ResponseField>
+    <ResponseField name="message" type="string | null">Error message.</ResponseField>
+    <ResponseField name="qtyBefore" type="decimal | null">Quantity before.</ResponseField>
+    <ResponseField name="qtyAfter" type="decimal | null">Quantity after.</ResponseField>
+    <ResponseField name="deltaApplied" type="decimal | null">Delta applied.</ResponseField>
+    <ResponseField name="adjustmentId" type="string (uuid) | null">ID of the created adjustment.</ResponseField>
+  </Expandable>
+</ResponseField>

@@ -1,0 +1,199 @@
+---
+title: Local Development Setup
+description: Complete guide to setting up the CobranzaDigital development environment, including frontend and backend services.
+---
+
+## Prerequisites
+
+Before cloning the repository, ensure the following tools are installed:
+
+| Tool | Required version | Notes |
+|---|---|---|
+| Node.js | LTS (≥ 22) | Required by Angular CLI and npm scripts |
+| npm | 11.8.0 | Pinned via `packageManager` in `package.json` |
+| .NET SDK | 10.0.100 | Version pinned in `backend/global.json` with `rollForward: latestFeature` |
+| Git | Any recent | — |
+
+<Note>
+The backend `global.json` pins the SDK to `10.0.100` with `rollForward: latestFeature`, so any `10.0.x` patch release works automatically.
+</Note>
+
+## Clone the repository
+
+```bash
+git clone <repository-url> cobranza-digital
+cd cobranza-digital
+```
+
+The monorepo contains two top-level areas:
+
+```
+cobranza-digital/
+├── frontend/   # Angular 21 application
+├── backend/    # .NET 10 Clean Architecture API
+└── docs/       # Source documentation
+```
+
+## Configure the backend
+
+<Steps>
+  <Step title="Review appsettings">
+    The API uses layered configuration. `appsettings.json` contains production defaults; `appsettings.Development.json` overrides them locally.
+
+    Key sections you must verify before running the API:
+
+    ```json appsettings.Development.json
+    {
+      "ConnectionStrings": {
+        "DefaultConnection": "Server=<host>;Database=<db>;User Id=<user>;Password=<pass>;TrustServerCertificate=true;"
+      },
+      "Jwt": {
+        "Issuer": "CobranzaDigital",
+        "Audience": "CobranzaDigital.Api",
+        "AccessTokenMinutes": 15,
+        "RefreshTokenDays": 7
+      },
+      "Cors": {
+        "AllowedOrigins": ["https://localhost:5173"]
+      },
+      "IdentitySeed": {
+        "AdminEmail": "admin@local"
+      }
+    }
+    ```
+
+    <Warning>
+      The `Jwt.SigningKey` in `appsettings.json` defaults to `CHANGE_ME_TO_A_SECURE_32_CHAR_MIN_KEY`. Override it in `appsettings.Development.json` or via an environment variable before running the API. The key must be at least 32 characters.
+    </Warning>
+  </Step>
+
+  <Step title="Set environment variables (optional)">
+    Two environment variables control startup behaviour:
+
+    | Variable | Value | Effect |
+    |---|---|---|
+    | `APPLY_MIGRATIONS_ON_STARTUP` | `1` | Runs EF Core migrations on boot |
+    | `SEED_DEV_DATA` | `1` | Seeds identity and POS bootstrap data |
+
+    For a first-time local setup, set both:
+
+    ```bash
+    export APPLY_MIGRATIONS_ON_STARTUP=1
+    export SEED_DEV_DATA=1
+    ```
+  </Step>
+
+  <Step title="Restore and run the API">
+    ```bash
+    cd backend
+    dotnet restore
+    dotnet run --project src/CobranzaDigital.Api
+    ```
+
+    The API starts on `https://localhost:7146` by default. Swagger UI is available at `https://localhost:7146/swagger`.
+  </Step>
+</Steps>
+
+## Configure the frontend
+
+<Steps>
+  <Step title="Install dependencies">
+    ```bash
+    cd frontend
+    npm install
+    ```
+
+    Husky git hooks are installed automatically via the `prepare` script.
+  </Step>
+
+  <Step title="Verify proxy configuration">
+    The Angular dev server proxies two paths to the .NET API. No `.env` file is needed — the proxy is configured in `proxy.conf.json`:
+
+    ```json proxy.conf.json
+    {
+      "/api": {
+        "target": "https://localhost:7146",
+        "secure": false,
+        "changeOrigin": true,
+        "logLevel": "debug"
+      },
+      "/swagger": {
+        "target": "https://localhost:7146",
+        "secure": false,
+        "changeOrigin": true,
+        "logLevel": "debug"
+      }
+    }
+    ```
+
+    `secure: false` disables TLS certificate validation for the local API's self-signed certificate.
+  </Step>
+
+  <Step title="Start the dev server">
+    ```bash
+    npm start
+    ```
+
+    The application is served at `http://localhost:4200`. All `/api/**` and `/swagger/**` requests are transparently proxied to `https://localhost:7146`.
+  </Step>
+</Steps>
+
+## Running both services simultaneously
+
+Open two terminal tabs from the repository root:
+
+<CodeGroup>
+```bash Backend
+cd backend
+dotnet run --project src/CobranzaDigital.Api
+```
+
+```bash Frontend
+cd frontend
+npm start
+```
+</CodeGroup>
+
+Once both are running:
+
+| Service | URL |
+|---|---|
+| Angular dev server | `http://localhost:4200` |
+| .NET API | `https://localhost:7146` |
+| Swagger UI | `http://localhost:4200/swagger` (proxied) |
+| Health check | `https://localhost:7146/health` |
+
+## Data protection keys
+
+The API persists Data Protection keys to the filesystem:
+
+```json appsettings.json
+{
+  "DataProtection": {
+    "KeysPath": "/var/www/cobranzadigital/api/keys",
+    "ApplicationName": "CobranzaDigital"
+  }
+}
+```
+
+For local development, override `KeysPath` to a writable directory, for example:
+
+```bash
+export DataProtection__KeysPath=/tmp/cobranza-keys
+```
+
+## Rate limiting defaults
+
+In development the rate limiter is configured for a higher limit than production:
+
+```json appsettings.Development.json
+{
+  "RateLimiting": {
+    "PermitLimit": 300,
+    "WindowSeconds": 60,
+    "QueueLimit": 0
+  }
+}
+```
+
+The limiter is keyed per IP address using a fixed-window algorithm. It is disabled entirely when the `ASPNETCORE_ENVIRONMENT` is set to `Testing`.

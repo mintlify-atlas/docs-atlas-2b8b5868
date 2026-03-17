@@ -1,0 +1,184 @@
+---
+title: "Admin Roles"
+description: "List, create, and delete roles used to control access within the CobranzaDigital platform. Requires UserAdminAccess policy."
+---
+
+<Warning>
+  All endpoints on this page require the `UserAdminAccess` authorization policy.
+  This feature is also gated behind the `Features:UserAdmin` feature flag.
+  A valid token without sufficient permissions returns `403 Forbidden`.
+</Warning>
+
+All role management routes are under:
+
+```
+/api/v1/admin/roles
+```
+
+## Built-in roles
+
+CobranzaDigital ships with a set of predefined roles:
+
+| Role | Scope | Description |
+|------|-------|-------------|
+| `SuperAdmin` | Platform | Full access to all platform and tenant APIs. Required for `PlatformOnly` policy. |
+| `PosAdmin` | Tenant | Administrative access within a tenant (catalog, settings, reports). |
+| `AdminStore` | Store | Store-level administrator (users, shifts, inventory). |
+| `PosOperator` | Store | Day-to-day POS cashier — can create and void sales. |
+| `PosReportViewer` | Tenant / Store | Read-only access to sales and inventory reports. |
+
+<Note>
+  You can also create custom roles via the `POST /api/v1/admin/roles` endpoint.
+  Assign custom roles to users the same way as built-in roles.
+</Note>
+
+---
+
+## List roles
+
+```
+GET /api/v1/admin/roles
+```
+
+Returns all roles registered in the system, including built-in and custom roles.
+
+### Response `200 OK`
+
+Returns an array of `AdminRoleDto` objects:
+
+<ResponseField name="name" type="string">
+  The role name used in authorization and role-assignment calls.
+</ResponseField>
+
+### Status codes
+
+| Code | Description |
+|------|-------------|
+| `200` | Success. |
+| `401` | Missing or invalid token. |
+| `403` | Caller lacks `UserAdminAccess`. |
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X GET https://api.cobranzadigital.com/api/v1/admin/roles \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```json Response
+[
+  { "name": "SuperAdmin" },
+  { "name": "PosAdmin" },
+  { "name": "AdminStore" },
+  { "name": "PosOperator" },
+  { "name": "PosReportViewer" },
+  { "name": "CustomAuditRole" }
+]
+```
+</CodeGroup>
+
+---
+
+## Create role
+
+```
+POST /api/v1/admin/roles
+```
+
+Creates a new custom role. The action is audit-logged as `CreateRole`.
+
+### Request body
+
+<ParamField body="name" type="string" required>
+  Name of the role to create. Must be between 2 and 64 characters. Leading and
+  trailing whitespace is trimmed automatically. Must not duplicate an existing role name.
+</ParamField>
+
+### Response `201 Created`
+
+```json
+{ "name": "CustomAuditRole" }
+```
+
+### Status codes
+
+| Code | Description |
+|------|-------------|
+| `201` | Role created. Body contains `{ "name": "<roleName>" }`. |
+| `400` | `name` is blank, too short (< 2 chars), or too long (> 64 chars). |
+| `401` | Missing or invalid token. |
+| `403` | Caller lacks `UserAdminAccess`. |
+| `409` | A role with this name already exists. |
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X POST https://api.cobranzadigital.com/api/v1/admin/roles \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "CustomAuditRole"}'
+```
+
+```json Response
+{
+  "name": "CustomAuditRole"
+}
+```
+</CodeGroup>
+
+---
+
+## Delete role
+
+```
+DELETE /api/v1/admin/roles/{name}
+```
+
+Permanently removes a role from the system. The action is audit-logged as `DeleteRole`.
+
+<Warning>
+  Deleting a role that is still assigned to users will return `409 Conflict`.
+  Remove the role from all users via [Replace user roles](/api/admin/users#replace-user-roles)
+  before deleting it.
+</Warning>
+
+### Path parameters
+
+<ParamField path="name" type="string" required>
+  Name of the role to delete. URL-encode any special characters.
+</ParamField>
+
+### Response `204 No Content`
+
+No body is returned on success.
+
+### Status codes
+
+| Code | Description |
+|------|-------------|
+| `204` | Role deleted. |
+| `400` | Role name is blank after trimming. |
+| `401` | Missing or invalid token. |
+| `403` | Caller lacks `UserAdminAccess`. |
+| `404` | Role not found. |
+| `409` | Role is still assigned to one or more users. |
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X DELETE https://api.cobranzadigital.com/api/v1/admin/roles/CustomAuditRole \
+  -H "Authorization: Bearer $TOKEN"
+```
+</CodeGroup>
+
+---
+
+## Assigning roles to users
+
+Roles are assigned to users via the Users API, not via this endpoint. Use
+[Replace user roles](/api/admin/users#replace-user-roles) to set a user's full
+role list, or [Create user](/api/admin/users#create-user) to set an initial role
+at provisioning time.

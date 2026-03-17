@@ -1,0 +1,242 @@
+---
+title: Testing
+description: Testing strategy, tooling, and how to run frontend and backend tests for CobranzaDigital.
+---
+
+## Testing pyramid
+
+The project follows a three-layer testing pyramid:
+
+<CardGroup cols={3}>
+  <Card title="Backend Integration" icon="server">
+    Covers HTTP contracts, request/response payloads, validation, persistence, and critical business rules on real endpoints using `Microsoft.AspNetCore.Mvc.Testing`.
+  </Card>
+  <Card title="Frontend Unit (Vitest)" icon="code">
+    Covers utilities, data mapping, form validation, and component behaviour in isolation. Tests must be fast and deterministic.
+  </Card>
+  <Card title="E2E Playwright" icon="browser">
+    Covers critical user flows with business impact. POS flows intercept `/api/v1/pos/**` routes to validate the UI↔API contract.
+  </Card>
+</CardGroup>
+
+## Frontend: unit tests
+
+Unit tests use **Vitest** via the Angular CLI test runner (`@angular/build:unit-test` with `runner: vitest`).
+
+Test files live alongside source files with the `.spec.ts` suffix.
+
+### Running unit tests
+
+<CodeGroup>
+```bash Watch mode (development)
+npm test
+```
+
+```bash Single run (CI)
+npm run test:ci
+```
+
+```bash All spec files
+npm run test:changed
+```
+</CodeGroup>
+
+### Configuration
+
+The test runner is configured in `angular.json`:
+
+```json angular.json (test target)
+{
+  "test": {
+    "builder": "@angular/build:unit-test",
+    "options": {
+      "runner": "vitest",
+      "buildTarget": "cobranza-digital:build:development",
+      "tsConfig": "tsconfig.spec.json",
+      "setupFiles": ["src/test-setup.ts"],
+      "providersFile": "src/test-providers.ts",
+      "coverage": false
+    }
+  }
+}
+```
+
+`src/test-setup.ts` and `src/test-providers.ts` configure the global test environment and dependency injection overrides.
+
+## Frontend: E2E tests
+
+End-to-end tests use **Playwright** (`@playwright/test` v1.55.0). Test files live in `frontend/e2e/`.
+
+### Configuration
+
+```typescript playwright.config.ts
+export default defineConfig({
+  testDir: './e2e',
+  fullyParallel: false,
+  retries: process.env.CI ? 2 : 0,
+  use: {
+    baseURL: 'http://127.0.0.1:4200',
+    trace: 'retain-on-failure',
+  },
+  webServer: {
+    command: 'npm run start -- --host 127.0.0.1 --port 4200',
+    url: 'http://127.0.0.1:4200',
+    reuseExistingServer: !process.env.CI,
+  },
+  projects: [
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'] },
+    },
+  ],
+});
+```
+
+Key behaviours:
+- Tests run **serially** (`fullyParallel: false`) to prevent race conditions on shared state.
+- Playwright automatically starts the Angular dev server unless one is already running (`reuseExistingServer: !CI`).
+- In CI, failed tests retry up to **2 times**.
+- Traces are captured on failure (`trace: 'retain-on-failure'`).
+- Only **Chromium / Desktop Chrome** is in the project matrix.
+
+### Running E2E tests
+
+<CodeGroup>
+```bash Standard run
+npm run e2e
+```
+
+```bash CI mode (line reporter)
+npm run e2e:ci
+```
+
+```bash Interactive UI mode
+npm run e2e:ui
+```
+</CodeGroup>
+
+### UI-contract tests
+
+POS and platform flows use Playwright's `route` interception to mock API responses and assert the UI renders the correct elements. Tests rely on `data-testid` attributes for stable element selection.
+
+Examples of E2E spec files:
+
+| File | Coverage |
+|---|---|
+| `e2e/pos.reports.contract.spec.ts` | POS reports v1 UI↔API contract |
+| `e2e/pos.reports.v2.contract.spec.ts` | POS reports v2 endpoints |
+| `e2e/pos.release1.contract.spec.ts` | POS availability and stale-cache flow |
+| `e2e/pos.inventory.releasec.contract.spec.ts` | Inventory and out-of-stock UI |
+| `e2e/platform.dashboard.contract.spec.ts` | Platform dashboard (SuperAdmin) |
+| `e2e/platform.tenants.verticals.contract.spec.ts` | Platform tenants and verticals |
+| `e2e/admin.users.scoped-ux.contract.spec.ts` | Admin user management |
+| `e2e/platform.stores.contract.spec.ts` | Platform stores admin |
+
+## Backend: integration tests
+
+Backend tests use **xUnit** (v2.9.2) with `Microsoft.AspNetCore.Mvc.Testing` for in-process HTTP testing.
+
+There are two test projects:
+
+```
+backend/tests/
+├── CobranzaDigital.Api.Tests/          # API integration tests
+└── CobranzaDigital.Application.Tests/  # Application-layer unit tests
+```
+
+### API integration tests
+
+`CobranzaDigital.Api.Tests` contains 19 test files covering all major feature areas:
+
+| File | Coverage |
+|---|---|
+| `SmokeTests.cs` | Basic API availability |
+| `AuditLoggingTests.cs` | Audit trail for critical actions |
+| `ExceptionHandlingMiddlewareTests.cs` | ProblemDetails error format |
+| `AdminContractsTests.cs` | Admin API backward compatibility |
+| `AdminUsersCreateIntegrationTests.cs` | User creation scoping by role |
+| `AdminUsersTemporaryPasswordIntegrationTests.cs` | Temporary password reset |
+| `AdminUsersUpdateIntegrationTests.cs` | Scoped user updates |
+| `PosReportsIntegrationTests.cs` | POS reports v1 endpoints |
+| `PosReportsV2IntegrationTests.cs` | POS reports v2 KPIs, mix, addons |
+| `PosSalesIntegrationTests.cs` | Sale creation, idempotency, inventory |
+| `PosCatalogIntegrationTests.cs` | Catalog snapshot, ETag, availability |
+| `PosShiftIntegrationTests.cs` | Shift open/preview/close |
+| `TenantIsolationIntegrationTests.cs` | Cross-tenant data isolation |
+| `PlatformDashboardIntegrationTests.cs` | Platform dashboard (SuperAdmin) |
+| `PlatformStoresAdminIntegrationTests.cs` | Platform store management |
+| `PlatformTenantCreationIntegrationTests.cs` | Tenant provisioning |
+| `PlatformTenantDetailsIntegrationTests.cs` | Tenant details and settings |
+
+### Application unit tests
+
+`CobranzaDigital.Application.Tests` covers pure application-layer logic:
+
+| File | Coverage |
+|---|---|
+| `BusinessTimeTests.cs` | Business time calculations |
+| `PosCatalogValidationTests.cs` | Catalog validation rules |
+| `PosPricingQuoteCalculatorTests.cs` | Quote pricing calculator |
+
+### Running backend tests
+
+```bash
+cd backend
+dotnet test
+```
+
+The `Testing` environment is set automatically by the test host. In that mode:
+- EF Core runs `EnsureCreatedAsync` instead of migrations.
+- Rate limiting is disabled.
+- HTTPS redirection is skipped.
+- POS data is seeded via `PosBootstrapper.SeedAsync`.
+
+## Testing matrix
+
+The project maintains a detailed testing matrix in `docs/testing-matrix.md` that maps every feature and endpoint to its covering tests.
+
+**When to add each type of test:**
+
+| Change type | Required tests |
+|---|---|
+| Request/response contract change | Backend integration test for the affected endpoint |
+| Frontend validation or mapping change | Vitest unit tests (nominal + edge cases) |
+| Critical POS flow change (sale, void, shift close) | Playwright E2E UI-contract test intercepting `/api/v1/pos/**` |
+
+## Definition of Done
+
+Every PR must satisfy:
+
+- Build succeeds in all affected areas
+- Frontend unit tests pass (`npm run test:ci`)
+- E2E tests pass for impacted flows (`npm run e2e:ci`)
+- Backend integration/unit tests pass (`dotnet test`)
+- Documentation updated for contract changes, compatibility notes, or critical business rule changes
+
+<Tip>
+The golden rule: **any contract or critical-rule change requires updated or new tests and documentation in the same PR** — for both backend and frontend.
+</Tip>
+
+## CI pipeline
+
+The CI pipeline lives at `/.github/workflows/ci.yml` and runs on:
+
+- Pull requests targeting `main`
+- Pushes to `main`
+- Manual `workflow_dispatch`
+
+`dorny/paths-filter` detects which areas changed. Only the relevant jobs run:
+
+| Job | Trigger | What it does |
+|---|---|---|
+| `backend_tests` | Changes in `backend/**` | `dotnet restore` → `dotnet build` → `dotnet test` with SQL Server service container |
+| `frontend_tests` | Changes in `frontend/**` | `npm ci` → `npm run build` → `npm run test:ci` → `npm run e2e:ci` |
+
+### Deploy gates
+
+Deploys are defined in separate workflows at the repository root:
+
+- `/.github/workflows/deploy-api.yml` — triggered by successful CI run **and** changes in `backend/**`
+- `/.github/workflows/deploy-web.yml` — triggered by successful CI run **and** changes in `frontend/**`
+
+Both can also be triggered manually via `workflow_dispatch`. If no relevant changes are detected, the deploy workflow exits without deploying.

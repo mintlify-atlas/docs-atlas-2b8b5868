@@ -1,0 +1,409 @@
+---
+title: "Catalog"
+description: "Retrieve the full catalog snapshot for a store and manage catalog categories and products via bulk import/export (v2)."
+---
+
+## Overview
+
+The catalog API has two version tracks:
+
+| Version | Path prefix | Policy | Purpose |
+|---|---|---|---|
+| v1 | `/api/v1/pos/catalog` | `PosOperator` | Read the full catalog snapshot |
+| v2 | `/api/v2/pos/catalog` | `PosAdmin` | Export and bulk-import categories and products |
+
+All endpoints require `TenantOrPlatform` and a selected tenant.
+
+---
+
+## Get catalog snapshot (v1)
+
+```
+GET /api/v1/pos/catalog/snapshot
+```
+
+Returns the complete catalog for a store — products, categories, option sets, option items, customization schemas, selection groups, extras, included items, and product overrides — in a single response.
+
+The response is **ETag-cached**. Pass `If-None-Match` with the previously received ETag value to receive a `304 Not Modified` when the catalog has not changed, saving bandwidth.
+
+### Query parameters
+
+<ParamField query="storeId" type="string (uuid)">
+  The store to fetch the catalog for. Required in multi-store tenants.
+</ParamField>
+
+### Response headers
+
+| Header | Value |
+|---|---|
+| `ETag` | Opaque version string for the catalog. |
+| `Cache-Control` | `public, max-age=60` |
+
+### Response body
+
+<ResponseField name="tenantId" type="string (uuid)">
+  The tenant this catalog belongs to.
+</ResponseField>
+
+<ResponseField name="verticalId" type="string (uuid)">
+  The vertical (business type) for this tenant.
+</ResponseField>
+
+<ResponseField name="catalogTemplateId" type="string (uuid)">
+  The catalog template in use.
+</ResponseField>
+
+<ResponseField name="storeId" type="string (uuid)">
+  The store this snapshot is for.
+</ResponseField>
+
+<ResponseField name="timeZoneId" type="string">
+  The store's configured IANA time zone (e.g., `"America/Mexico_City"`).
+</ResponseField>
+
+<ResponseField name="generatedAtUtc" type="string (ISO 8601)">
+  When this snapshot was generated.
+</ResponseField>
+
+<ResponseField name="catalogVersion" type="string">
+  Monotonic version identifier for the catalog.
+</ResponseField>
+
+<ResponseField name="categories" type="array">
+  All active categories.
+  <Expandable title="Category object">
+    <ResponseField name="id" type="string (uuid)">Category ID.</ResponseField>
+    <ResponseField name="categoryCode" type="string">Short code (e.g., `"BVRG"`).</ResponseField>
+    <ResponseField name="name" type="string">Display name.</ResponseField>
+    <ResponseField name="sortOrder" type="integer">Display order.</ResponseField>
+    <ResponseField name="isActive" type="boolean">Whether the category is active.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="products" type="array">
+  All products in the catalog.
+  <Expandable title="Product object">
+    <ResponseField name="id" type="string (uuid)">Product ID.</ResponseField>
+    <ResponseField name="externalCode" type="string | null">SKU or external reference code.</ResponseField>
+    <ResponseField name="name" type="string">Product name.</ResponseField>
+    <ResponseField name="categoryId" type="string (uuid)">Parent category.</ResponseField>
+    <ResponseField name="subcategoryName" type="string | null">Optional subcategory label.</ResponseField>
+    <ResponseField name="basePrice" type="decimal">Catalog base price.</ResponseField>
+    <ResponseField name="isActive" type="boolean">Whether the product is active.</ResponseField>
+    <ResponseField name="isAvailable" type="boolean">Whether available for sale at this store.</ResponseField>
+    <ResponseField name="customizationSchemaId" type="string (uuid) | null">Linked customization schema.</ResponseField>
+    <ResponseField name="isInventoryTracked" type="boolean | null">Whether stock is tracked.</ResponseField>
+    <ResponseField name="stockOnHandQty" type="decimal | null">Current stock quantity.</ResponseField>
+    <ResponseField name="availabilityReason" type="string | null">Reason code if unavailable.</ResponseField>
+    <ResponseField name="storeOverrideState" type="string | null">`"Enabled"` or `"Disabled"` if a store-level override is applied.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="optionSets" type="array">
+  Named sets of option items.
+  <Expandable title="OptionSet object">
+    <ResponseField name="id" type="string (uuid)">Option set ID.</ResponseField>
+    <ResponseField name="name" type="string">Display name (e.g., `"Tamaño"`).</ResponseField>
+    <ResponseField name="isActive" type="boolean">Whether the option set is active.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="optionItems" type="array">
+  Individual options within an option set.
+  <Expandable title="OptionItem object">
+    <ResponseField name="id" type="string (uuid)">Option item ID.</ResponseField>
+    <ResponseField name="optionSetId" type="string (uuid)">Parent option set.</ResponseField>
+    <ResponseField name="name" type="string">Display name (e.g., `"Grande"`).</ResponseField>
+    <ResponseField name="isActive" type="boolean">Active flag.</ResponseField>
+    <ResponseField name="isAvailable" type="boolean">Available for selection.</ResponseField>
+    <ResponseField name="sortOrder" type="integer">Display order within the set.</ResponseField>
+    <ResponseField name="availabilityReason" type="string | null">Reason if unavailable.</ResponseField>
+    <ResponseField name="storeOverrideState" type="string | null">Store-level override state.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="schemas" type="array">
+  Customization schemas linking selection groups to products.
+  <Expandable title="Schema object">
+    <ResponseField name="id" type="string (uuid)">Schema ID.</ResponseField>
+    <ResponseField name="name" type="string">Schema name.</ResponseField>
+    <ResponseField name="isActive" type="boolean">Active flag.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="selectionGroups" type="array">
+  Groups within a schema defining selection rules.
+  <Expandable title="SelectionGroup object">
+    <ResponseField name="id" type="string (uuid)">Selection group ID.</ResponseField>
+    <ResponseField name="schemaId" type="string (uuid)">Parent schema.</ResponseField>
+    <ResponseField name="key" type="string">Machine-readable key (e.g., `"size"`).</ResponseField>
+    <ResponseField name="label" type="string">Display label (e.g., `"Tamaño"`).</ResponseField>
+    <ResponseField name="selectionMode" type="string">`"Single"` or `"Multi"`.</ResponseField>
+    <ResponseField name="minSelections" type="integer">Minimum required selections.</ResponseField>
+    <ResponseField name="maxSelections" type="integer">Maximum allowed selections.</ResponseField>
+    <ResponseField name="optionSetId" type="string (uuid)">The option set providing the choices.</ResponseField>
+    <ResponseField name="isActive" type="boolean">Active flag.</ResponseField>
+    <ResponseField name="sortOrder" type="integer">Display order.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="extras" type="array">
+  Add-on extras that can be attached to sale line items.
+  <Expandable title="Extra object">
+    <ResponseField name="id" type="string (uuid)">Extra ID.</ResponseField>
+    <ResponseField name="name" type="string">Display name.</ResponseField>
+    <ResponseField name="price" type="decimal">Unit price.</ResponseField>
+    <ResponseField name="isActive" type="boolean">Active flag.</ResponseField>
+    <ResponseField name="isAvailable" type="boolean">Available for sale.</ResponseField>
+    <ResponseField name="isInventoryTracked" type="boolean | null">Whether stock is tracked.</ResponseField>
+    <ResponseField name="stockOnHandQty" type="decimal | null">Current stock.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="includedItems" type="array">
+  Default extras included with specific products.
+  <Expandable title="IncludedItem object">
+    <ResponseField name="id" type="string (uuid)">Record ID.</ResponseField>
+    <ResponseField name="productId" type="string (uuid)">The product.</ResponseField>
+    <ResponseField name="extraId" type="string (uuid)">The included extra.</ResponseField>
+    <ResponseField name="quantity" type="integer">Included quantity.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="overrides" type="array">
+  Product-level option group overrides restricting allowed selections.
+</ResponseField>
+
+<ResponseField name="versionStamp" type="string">
+  Opaque stamp used internally for cache invalidation.
+</ResponseField>
+
+### Status codes
+
+| Code | Description |
+|---|---|
+| `200 OK` | Catalog returned. |
+| `304 Not Modified` | Catalog unchanged since `If-None-Match` ETag. |
+| `401 Unauthorized` | Missing or invalid token. |
+
+### Example
+
+```bash curl
+curl "https://api.cobranzadigital.com/api/v1/pos/catalog/snapshot?storeId=f47ac10b-58cc-4372-a567-0e02b2c3d479" \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "X-Tenant-Id: <tenantId>" \
+  -H "If-None-Match: \"v-abc123\""
+```
+
+---
+
+## Export categories (v2)
+
+```
+GET /api/v2/pos/catalog/categories/export
+```
+
+Downloads all categories as a CSV file. Requires `PosAdmin` policy.
+
+**Response:** `text/csv` with columns: `categoryCode`, `name`, `sortOrder`, `updatedAtUtc`.
+
+**Limit:** 50,000 rows. Returns `413 Payload Too Large` if exceeded.
+
+### Example
+
+```bash curl
+curl "https://api.cobranzadigital.com/api/v2/pos/catalog/categories/export" \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "X-Tenant-Id: <tenantId>" \
+  -o categories-export.csv
+```
+
+---
+
+## Export products (v2)
+
+```
+GET /api/v2/pos/catalog/products/export
+```
+
+Downloads all products as a CSV file. Requires `PosAdmin` policy.
+
+**Response:** `text/csv` with columns: `externalCode`, `name`, `categoryCode`, `basePrice`, `isActive`, `isAvailable`, `isInventoryTracked`, `subcategoryName`, `updatedAtUtc`.
+
+**Limit:** 50,000 rows.
+
+### Example
+
+```bash curl
+curl "https://api.cobranzadigital.com/api/v2/pos/catalog/products/export" \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "X-Tenant-Id: <tenantId>" \
+  -o products-export.csv
+```
+
+---
+
+## Validate category import (v2)
+
+```
+POST /api/v2/pos/catalog/categories/import/validate
+```
+
+Validates a batch of categories without committing changes. Use this before calling `apply` to surface errors first.
+
+### Request body
+
+<ParamField body="lines" type="array" required>
+  <Expandable title="Category import line">
+    <ParamField body="lines[].lineNo" type="integer" required>1-based line number for error reporting.</ParamField>
+    <ParamField body="lines[].categoryCode" type="string" required>Unique category code.</ParamField>
+    <ParamField body="lines[].name" type="string" required>Display name.</ParamField>
+    <ParamField body="lines[].sortOrder" type="integer" required>Display order.</ParamField>
+    <ParamField body="lines[].isActive" type="boolean" required>Active flag.</ParamField>
+  </Expandable>
+</ParamField>
+
+### Response
+
+<ResponseField name="totalLines" type="integer">Total lines submitted.</ResponseField>
+<ResponseField name="validCount" type="integer">Lines that passed validation.</ResponseField>
+<ResponseField name="invalidCount" type="integer">Lines that failed validation.</ResponseField>
+<ResponseField name="lines" type="array">
+  Per-line results.
+  <Expandable title="Line result">
+    <ResponseField name="lineNo" type="integer">The line number.</ResponseField>
+    <ResponseField name="status" type="string">`"Valid"` or `"Invalid"`.</ResponseField>
+    <ResponseField name="errorCode" type="string | null">Machine-readable error code.</ResponseField>
+    <ResponseField name="message" type="string | null">Human-readable error message.</ResponseField>
+    <ResponseField name="action" type="string | null">`"Create"` or `"Update"` — what would happen on apply.</ResponseField>
+    <ResponseField name="entityId" type="string (uuid) | null">Existing entity ID if this is an update.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## Apply category import (v2)
+
+```
+POST /api/v2/pos/catalog/categories/import/apply
+```
+
+Commits a validated category batch. Idempotent — repeat calls with the same `batchClientOperationId` return the cached result.
+
+### Request body
+
+<ParamField body="batchClientOperationId" type="string (uuid)" required>
+  Idempotency key for this batch.
+</ParamField>
+
+<ParamField body="lines" type="array" required>
+  Same structure as validate request.
+</ParamField>
+
+### Response
+
+<ResponseField name="batchClientOperationId" type="string (uuid)">The batch key.</ResponseField>
+<ResponseField name="appliedCount" type="integer">Lines successfully applied.</ResponseField>
+<ResponseField name="failedCount" type="integer">Lines that failed to apply.</ResponseField>
+<ResponseField name="lines" type="array">Per-line result (same shape as validate response).</ResponseField>
+
+---
+
+## Validate product import (v2)
+
+```
+POST /api/v2/pos/catalog/products/import/validate
+```
+
+Validates a batch of products without committing.
+
+### Request body
+
+<ParamField body="lines" type="array" required>
+  <Expandable title="Product import line">
+    <ParamField body="lines[].lineNo" type="integer" required>1-based line number.</ParamField>
+    <ParamField body="lines[].externalCode" type="string" required>SKU or external code.</ParamField>
+    <ParamField body="lines[].name" type="string" required>Product name.</ParamField>
+    <ParamField body="lines[].categoryCode" type="string" required>Category code (must exist).</ParamField>
+    <ParamField body="lines[].basePrice" type="decimal" required>Base price.</ParamField>
+    <ParamField body="lines[].isActive" type="boolean" required>Active flag.</ParamField>
+    <ParamField body="lines[].isAvailable" type="boolean" required>Available flag.</ParamField>
+    <ParamField body="lines[].isInventoryTracked" type="boolean" required>Whether to track inventory for this product.</ParamField>
+    <ParamField body="lines[].subcategoryName" type="string">Optional subcategory.</ParamField>
+  </Expandable>
+</ParamField>
+
+### Response
+
+Same shape as [Validate category import](#validate-category-import-v2) response.
+
+---
+
+## Apply product import (v2)
+
+```
+POST /api/v2/pos/catalog/products/import/apply
+```
+
+Commits a validated product batch.
+
+### Request body
+
+<ParamField body="batchClientOperationId" type="string (uuid)" required>
+  Idempotency key.
+</ParamField>
+
+<ParamField body="lines" type="array" required>
+  Same structure as validate request.
+</ParamField>
+
+### Response
+
+Same shape as [Apply category import](#apply-category-import-v2) response.
+
+### Example (validate then apply)
+
+<CodeGroup>
+```bash Validate
+curl -X POST https://api.cobranzadigital.com/api/v2/pos/catalog/products/import/validate \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "X-Tenant-Id: <tenantId>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "lines": [
+      {
+        "lineNo": 1,
+        "externalCode": "CAFE-001",
+        "name": "Café Americano",
+        "categoryCode": "BVRG",
+        "basePrice": 35.00,
+        "isActive": true,
+        "isAvailable": true,
+        "isInventoryTracked": false
+      }
+    ]
+  }'
+```
+
+```bash Apply
+curl -X POST https://api.cobranzadigital.com/api/v2/pos/catalog/products/import/apply \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "X-Tenant-Id: <tenantId>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "batchClientOperationId": "a3bb189e-8bf9-3888-9912-ace4e6543002",
+    "lines": [
+      {
+        "lineNo": 1,
+        "externalCode": "CAFE-001",
+        "name": "Café Americano",
+        "categoryCode": "BVRG",
+        "basePrice": 35.00,
+        "isActive": true,
+        "isAvailable": true,
+        "isInventoryTracked": false
+      }
+    ]
+  }'
+```
+</CodeGroup>

@@ -1,0 +1,241 @@
+---
+title: Platform Management
+description: SuperAdmin-only platform controls — managing verticals, tenants, stores, catalog templates, and the platform-wide operations dashboard.
+---
+
+## Overview
+
+The **Platform** layer sits above all tenants. Only users with the `SuperAdmin` role (enforced via the `PlatformOnly` authorization policy) can access platform APIs. These endpoints manage the full multi-tenant hierarchy: verticals → tenants → stores, and the catalog template assignments that seed each tenant's product catalog.
+
+<Warning>
+  All platform endpoints require the `PlatformOnly` policy. Regular tenant operators (`PosOperator`, `PosAdmin`) have no access to these routes.
+</Warning>
+
+**API base:** `api/v1/platform`
+
+---
+
+## Tenant Management
+
+**Route:** `api/v1/platform/tenants`
+
+### List Tenants
+
+`GET /api/v1/platform/tenants`
+
+Returns all tenants ordered by name.
+
+```json
+[
+  {
+    "id": "<guid>",
+    "verticalId": "<guid>",
+    "name": "Café del Centro",
+    "slug": "cafe-del-centro",
+    "isActive": true,
+    "defaultStoreId": "<guid>",
+    "createdAtUtc": "2026-01-15T10:00:00Z",
+    "updatedAtUtc": "2026-01-15T10:00:00Z"
+  }
+]
+```
+
+### Create Tenant
+
+`POST /api/v1/platform/tenants`
+
+Creating a tenant automatically:
+1. Creates the `Tenant` record.
+2. Creates a default `Store` named `"{tenantName} Matriz"` with the specified `timeZoneId`.
+3. Sets `Tenant.DefaultStoreId` to the new store.
+4. Assigns the active `CatalogTemplate` for the tenant's vertical via `TenantCatalogTemplate`.
+
+```json
+// Request
+{
+  "verticalId": "<guid>",
+  "name": "Café del Norte",
+  "slug": "cafe-del-norte",
+  "timeZoneId": "America/Mexico_City"
+}
+```
+
+<Note>
+  `timeZoneId` defaults to `America/Mexico_City` when omitted. This timezone is used for all date-range calculations in sales and reports.
+</Note>
+
+### Update Tenant
+
+`PUT /api/v1/platform/tenants/{id}`
+
+Updates `Name`, `Slug`, `VerticalId`, and `IsActive`. Changes are recorded in the audit log with before/after snapshots (`AuditActions.UpdateTenant`).
+
+### Deactivate Tenant
+
+`DELETE /api/v1/platform/tenants/{id}`
+
+Soft-delete: sets `IsActive=false`. The tenant data is retained; operators for that tenant can no longer access the POS.
+
+### Get Tenant Details
+
+`GET /api/v1/platform/tenants/{id}`
+
+Returns full tenant details including store list and POS settings via `IPlatformTenantService.GetTenantDetailsAsync`.
+
+---
+
+## Store Management
+
+**Route:** `api/v1/platform` (store sub-resources)
+
+### List Stores for a Tenant
+
+`GET /api/v1/platform/tenants/{tenantId}/stores`
+
+Returns all stores for a tenant as `PlatformTenantStoreListItemDto`, including which store is the default (`isDefaultStore`).
+
+### Get Store Details
+
+`GET /api/v1/platform/stores/{storeId}`
+
+Returns full store details as `PlatformStoreDetailsDto`.
+
+### Update Store
+
+`PUT /api/v1/platform/stores/{storeId}`
+
+Updates store properties (`Name`, `IsActive`, `TimeZoneId`). The audit logger records before/after values for `Name`, `IsActive`, and `TimeZoneId` under `AuditActions.UpdateStore`.
+
+```json
+// Request
+{
+  "name": "Sucursal Norte",
+  "isActive": true,
+  "timeZoneId": "America/Monterrey"
+}
+```
+
+### Set Default Store
+
+`PUT /api/v1/platform/tenants/{tenantId}/default-store`
+
+Changes which store is used as the default when no `storeId` is specified in POS API calls. The previous and new `DefaultStoreId` are recorded in the audit log.
+
+```json
+{ "storeId": "<new-default-store-guid>" }
+```
+
+---
+
+## Multi-Store Configuration
+
+Multi-store behavior is controlled by `PosSettings` fields on the tenant:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `MultiStoreEnabled` | `bool` | `false` | When `true`, allows the POS to operate across multiple stores |
+| `MaxStoresAllowed` | `int` | `1` | Maximum number of active stores the tenant can have |
+| `DefaultStoreId` | `Guid` | — | Fallback store when no `storeId` is specified in API calls |
+| `ShowOnlyInStock` | `bool` | `false` | Controls whether zero-stock products are hidden from the POS catalog |
+| `CashDifferenceThreshold` | `decimal` | `0` | Minimum difference that triggers a required close reason |
+
+---
+
+## Vertical Management
+
+**Route:** `api/v1/platform/verticals`
+
+Verticals are industry segments (e.g., Coffee, Food, Retail) that define the shared catalog template pool.
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /verticals` | List all verticals ordered by name |
+| `POST /verticals` | Create a new vertical (`name`, `description`) |
+| `PUT /verticals/{id}` | Update name and description |
+| `DELETE /verticals/{id}` | Soft-deactivate (`IsActive=false`) |
+
+---
+
+## Catalog Template Management
+
+**Route:** `api/v1/platform/catalog-templates`
+
+Catalog templates are the master product catalog for a vertical. Each tenant inherits from one active template.
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /catalog-templates?verticalId=` | List templates, optionally filtered by vertical |
+| `POST /catalog-templates` | Create a template (`verticalId`, `name`, `version`, `isActive`) |
+| `PUT /catalog-templates/{id}` | Update template metadata |
+| `PUT /catalog-templates/tenants/{tenantId}` | Assign a template to a tenant (`catalogTemplateId`) |
+
+---
+
+## Platform Dashboard
+
+**Route:** `api/v1/platform/dashboard`  
+**Requires:** `PlatformOnly` policy
+
+The platform dashboard gives SuperAdmins a cross-tenant operational view.
+
+### Summary
+
+`GET /api/v1/platform/dashboard/summary?dateFrom=&dateTo=&threshold=5`
+
+High-level aggregate metrics across all tenants for the given date range.
+
+### Top Tenants
+
+`GET /api/v1/platform/dashboard/top-tenants?dateFrom=&dateTo=&top=10&includeInactive=false`
+
+Tenants ranked by sales volume in the period.
+
+### Executive Signals
+
+`GET /api/v1/platform/dashboard/executive-signals?dateFrom=&dateTo=&previousPeriodCompare=true`
+
+KPIs with optional period-over-period comparison (e.g., revenue growth, void rate change).
+
+### Sales Trend
+
+`GET /api/v1/platform/dashboard/sales-trend?dateFrom=&dateTo=&granularity=`
+
+Time-series sales data. `granularity` accepts `day`, `week`, or `month`.
+
+### Alerts
+
+<Steps>
+  <Step title="List active alerts">
+    `GET /api/v1/platform/dashboard/alerts` — returns platform-wide alerts such as stock-out hotspots or tenants with high void rates.
+  </Step>
+  <Step title="Drill into an alert">
+    `GET /api/v1/platform/dashboard/alerts/drilldown?code=&take=100&tenantId=&storeId=` — returns detailed records for a specific alert `code`. Returns `400 Bad Request` if `code` is missing or unrecognized.
+  </Step>
+</Steps>
+
+### Inventory Visibility
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /dashboard/out-of-stock` | Out-of-stock items across all stores, filterable by `tenantId`, `storeId`, `itemType`, `search`, `onlyTracked` |
+| `GET /dashboard/stockout-hotspots?threshold=5&top=10` | Stores or products with the most recurring stock-outs |
+| `GET /dashboard/stores/{storeId}/stockout-details` | Detailed stock-out breakdown for a specific store |
+| `GET /dashboard/recent-inventory-adjustments?take=20&reason=` | Latest inventory adjustments across the platform |
+
+### Tenant Overview
+
+`GET /api/v1/platform/dashboard/tenants/{tenantId}/overview?dateFrom=&dateTo=&threshold=5`
+
+Single-tenant drill-down metrics equivalent to the summary, scoped to one tenant.
+
+### Top Void Tenants
+
+`GET /api/v1/platform/dashboard/top-void-tenants?dateFrom=&dateTo=&top=10`
+
+Tenants ranked by void transaction count or rate, useful for fraud or training monitoring.
+
+### Activity Feed
+
+`GET /api/v1/platform/dashboard/activity-feed?take=20&eventType=`
+
+Recent platform events (e.g., tenant created, store updated, inventory adjustments) for an audit feed UI.

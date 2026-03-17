@@ -1,0 +1,184 @@
+---
+title: "Pricing"
+description: "Calculate real-time pricing quotes including wholesale tier discounts before creating a sale."
+---
+
+**Base path:** `/api/v1/pos/pricing`
+
+**Authentication required:** `TenantOrPlatform` + `PosOperator`. A tenant must be selected.
+
+## Overview
+
+The pricing quote endpoint computes the effective unit price and line subtotal for each item, applying wholesale tier discounts when applicable. Call this before creating a sale to confirm prices and capture a `pricingSnapshot` for each sale line.
+
+---
+
+## Quote pricing
+
+```
+POST /api/v1/pos/pricing/quote
+```
+
+Calculates prices for a list of items, applying tenant-level or product-level wholesale tier rules.
+
+### Request body
+
+<ParamField body="storeId" type="string (uuid)" required>
+  The store context for pricing calculation.
+</ParamField>
+
+<ParamField body="tenantPolicy" type="object">
+  Tenant-wide wholesale pricing policy. Omit to use only product-level overrides.
+  <Expandable title="TenantPolicy object">
+    <ParamField body="tenantPolicy.isEnabled" type="boolean" required>
+      Whether the tenant-level wholesale policy is active.
+    </ParamField>
+    <ParamField body="tenantPolicy.tiers" type="array" required>
+      Wholesale discount tiers, evaluated in order from highest `minQty` down.
+      <Expandable title="Tier object">
+        <ParamField body="tiers[].minQty" type="decimal" required>
+          Minimum quantity to activate this tier.
+        </ParamField>
+        <ParamField body="tiers[].discountType" type="string" required>
+          `"Percentage"` — discount as a percentage of base price. `"FixedAmount"` — fixed amount off per unit.
+        </ParamField>
+        <ParamField body="tiers[].discountValue" type="decimal" required>
+          Discount value. For `"Percentage"`, this is 0–100. For `"FixedAmount"`, this is the currency amount.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="lines" type="array" required>
+  Items to price.
+  <Expandable title="Quote line">
+    <ParamField body="lines[].productId" type="string (uuid)">
+      Product ID. Provide either `productId` or `externalCode`.
+    </ParamField>
+    <ParamField body="lines[].externalCode" type="string">
+      Product SKU. Alternative to `productId`.
+    </ParamField>
+    <ParamField body="lines[].qty" type="decimal" required>
+      Quantity being priced.
+    </ParamField>
+    <ParamField body="lines[].basePrice" type="decimal">
+      Override the catalog base price for this quote line. If omitted, the catalog price is used.
+    </ParamField>
+    <ParamField body="lines[].requestedUnitPrice" type="decimal">
+      Client-submitted price. The response includes `isMismatch: true` if this differs from the computed price.
+    </ParamField>
+    <ParamField body="lines[].override" type="object">
+      Product-level tier override, superseding the tenant policy for this line.
+      <Expandable title="Override object">
+        <ParamField body="override.mode" type="string" required>
+          `"Replace"` — replace tenant tiers entirely. `"Merge"` — merge with tenant tiers.
+        </ParamField>
+        <ParamField body="override.tiers" type="array" required>
+          Product-specific tier list (same structure as `tenantPolicy.tiers`).
+        </ParamField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Response
+
+<ResponseField name="lines" type="array">
+  Priced quote lines.
+  <Expandable title="Quote line response">
+    <ResponseField name="productId" type="string (uuid)">Resolved product ID.</ResponseField>
+    <ResponseField name="externalCode" type="string | null">External code.</ResponseField>
+    <ResponseField name="qty" type="decimal">Quantity priced.</ResponseField>
+    <ResponseField name="baseUnitPrice" type="decimal">Catalog base price per unit.</ResponseField>
+    <ResponseField name="appliedUnitPrice" type="decimal">Effective price per unit after discounts.</ResponseField>
+    <ResponseField name="tierApplied" type="object | null">
+      The tier that was applied, if any.
+      <Expandable title="TierApplied object">
+        <ResponseField name="minQty" type="decimal">Tier threshold.</ResponseField>
+        <ResponseField name="discountType" type="string">Discount type.</ResponseField>
+        <ResponseField name="discountValue" type="decimal">Discount value.</ResponseField>
+        <ResponseField name="source" type="string">Where the tier came from: `"TenantPolicy"` or `"ProductOverride"`.</ResponseField>
+      </Expandable>
+    </ResponseField>
+    <ResponseField name="lineSubtotal" type="decimal">`appliedUnitPrice` × `qty`.</ResponseField>
+    <ResponseField name="isMismatch" type="boolean">Whether `requestedUnitPrice` differs from `appliedUnitPrice`.</ResponseField>
+    <ResponseField name="expectedUnitPrice" type="decimal | null">The server-computed price when `isMismatch` is `true`.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="totals" type="object">
+  Aggregated totals for the entire quote.
+  <Expandable title="Totals">
+    <ResponseField name="subtotal" type="decimal">Sum of all line subtotals before any extra taxes or fees.</ResponseField>
+    <ResponseField name="total" type="decimal">Final total.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Status codes
+
+| Code | Description |
+|---|---|
+| `200 OK` | Quote calculated. |
+| `400 Bad Request` | Invalid request — missing required fields or unknown product. |
+| `401 Unauthorized` | Missing or invalid token. |
+| `403 Forbidden` | Insufficient policy. |
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X POST https://api.cobranzadigital.com/api/v1/pos/pricing/quote \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "X-Tenant-Id: <tenantId>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "storeId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+    "tenantPolicy": {
+      "isEnabled": true,
+      "tiers": [
+        { "minQty": 10, "discountType": "Percentage", "discountValue": 10 },
+        { "minQty": 25, "discountType": "Percentage", "discountValue": 15 }
+      ]
+    },
+    "lines": [
+      {
+        "productId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "qty": 12,
+        "requestedUnitPrice": 22.50
+      }
+    ]
+  }'
+```
+
+```json Response
+{
+  "lines": [
+    {
+      "productId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "externalCode": null,
+      "qty": 12,
+      "baseUnitPrice": 25.00,
+      "appliedUnitPrice": 22.50,
+      "tierApplied": {
+        "minQty": 10,
+        "discountType": "Percentage",
+        "discountValue": 10,
+        "source": "TenantPolicy"
+      },
+      "lineSubtotal": 270.00,
+      "isMismatch": false,
+      "expectedUnitPrice": null
+    }
+  ],
+  "totals": {
+    "subtotal": 270.00,
+    "total": 270.00
+  }
+}
+```
+</CodeGroup>
+
+<Note>
+When `isMismatch` is `true`, the POS client should inform the cashier that the price has changed before allowing the sale to proceed.
+</Note>

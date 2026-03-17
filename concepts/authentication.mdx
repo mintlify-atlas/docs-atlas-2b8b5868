@@ -1,0 +1,284 @@
+---
+title: Authentication
+description: JWT-based authentication flow in CobranzaDigital — from registration and login through token storage, automatic refresh, and logout.
+---
+
+## Overview
+
+CobranzaDigital uses JWT Bearer authentication. The backend issues two tokens on every successful login or registration:
+
+| Token | Lifetime | Storage |
+|-------|----------|---------|
+| Access token | 15 minutes (`Jwt:AccessTokenMinutes`) | `localStorage` under key `access_token` |
+| Refresh token | 7 days (`Jwt:RefreshTokenDays`) | `localStorage` under key `refresh_token` |
+
+The JWT is configured in `appsettings.json`:
+
+```json
+"Jwt": {
+  "Issuer": "CobranzaDigital",
+  "Audience": "CobranzaDigital.Api",
+  "SigningKey": "CHANGE_ME_TO_A_SECURE_32_CHAR_MIN_KEY",
+  "AccessTokenMinutes": 15,
+  "RefreshTokenDays": 7
+}
+```
+
+## API endpoints
+
+All auth endpoints live under `/api/v1/auth/` and are marked `[AllowAnonymous]`:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/auth/register` | Create a new user account; returns access + refresh tokens |
+| `POST` | `/api/v1/auth/login` | Validate credentials; returns access + refresh tokens |
+| `POST` | `/api/v1/auth/refresh` | Exchange a valid refresh token for a new token pair |
+
+### Register
+
+```http
+POST /api/v1/auth/register
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "YourSecurePassword1!"
+}
+```
+
+On success, the API creates the user, immediately issues tokens, and returns `200 OK` with an `AuthResponse` body. On failure, it returns `400 Bad Request` with a `ProblemDetails` body.
+
+### Login
+
+```http
+POST /api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "YourSecurePassword1!"
+}
+```
+
+Invalid credentials return `401 Unauthorized` with a `ProblemDetails` body containing `"detail": "The email or password is incorrect."`
+
+### Refresh
+
+```http
+POST /api/v1/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "<refresh-token-value>"
+}
+```
+
+An invalid or expired refresh token returns `401 Unauthorized`.
+
+## Token claims
+
+The access token payload includes:
+
+| Claim | Always present | Description |
+|-------|:--------------:|-------------|
+| `sub` | ✅ | User ID |
+| `email` | ✅ | User email address |
+| `nameidentifier` | ✅ | User ID (duplicate for compatibility) |
+| `jti` | ✅ | Unique token ID |
+| Role claim | ✅ | One or more role strings (e.g., `SuperAdmin`, `Cashier`) |
+| `tenantId` | Conditional | Present when `ApplicationUser.TenantId` has a value; absent for `SuperAdmin` |
+| `scope` | Conditional | Set to `cobranza.read` only when the user holds the `AdminStore` role |
+
+## Frontend: login flow
+
+`AuthService` handles all token operations as an Angular injectable service:
+
+```typescript
+// auth.service.ts
+const ACCESS_TOKEN_KEY  = 'access_token';
+const REFRESH_TOKEN_KEY = 'refresh_token';
+
+@Injectable({ providedIn: 'root' })
+export class AuthService {
+  private readonly apiClient   = inject(ApiClient);
+  private readonly router      = inject(Router);
+  private readonly accessToken = signal<string | null>(
+    localStorage.getItem(ACCESS_TOKEN_KEY)
+  );
+  private readonly refreshToken = signal<string | null>(
+    localStorage.getItem(REFRESH_TOKEN_KEY)
+  );
+
+  login(payload: AuthLoginRequest) {
+    return this.apiClient
+      .post<AuthTokensResponse>('/v1/auth/login', payload)
+      .pipe(tap((response) => this.storeTokens(this.normalizeTokens(response))));
+  }
+
+  loginAndRedirect(payload: AuthLoginRequest, returnUrl?: string | null) {
+    return this.login(payload).pipe(
+      tap(() => {
+        const targetUrl = this.resolvePostLoginUrl(returnUrl);
+        void this.router.navigateByUrl(targetUrl);
+      }),
+    );
+  }
+
+  private storeTokens(tokens: AuthTokens) {
+    localStorage.setItem(ACCESS_TOKEN_KEY,  tokens.accessToken);
+    localStorage.setItem(REFRESH_TOKEN_KEY, tokens.refreshToken);
+    this.accessToken.set(tokens.accessToken);
+    this.refreshToken.set(tokens.refreshToken);
+  }
+}
+```
+
+`AuthService` initializes both token signals from `localStorage` on startup, so a page refresh does not log the user out as long as a valid access token exists.
+
+Role extraction parses the JWT payload client-side (no library dependency), supporting both `roles`/`role` shorthand keys and the full Microsoft claim URI:
+
+```typescript
+private extractRoles(payload: Record<string, unknown> | null): string[] {
+  const roleClaimUris = [
+    'http://schemas.microsoft.com/ws/2008/06/identity/claims/role',
+    'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/role',
+  ];
+
+  const candidates = [
+    payload?.['roles'],
+    payload?.['role'],
+    ...roleClaimUris.map((key) => payload?.[key]),
+  ];
+
+  const roles = candidates.flatMap((value) => {
+    if (!value) return [];
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string') return [value];
+    return [];
+  });
+
+  return Array.from(
+    new Set(roles.map((role) => String(role).trim()).filter((role) => role.length > 0)),
+  );
+}
+```
+
+## HTTP interceptors
+
+Three interceptors handle token lifecycle on every outgoing HTTP request:
+
+### authInterceptor
+
+Attaches `Authorization: Bearer <access_token>` to all non-public API requests:
+
+```typescript
+// auth.interceptor.ts
+const ACCESS_TOKEN_KEY  = 'access_token';
+const PUBLIC_API_PATHS  = ['/v1/auth/login', '/v1/auth/register', '/v1/auth/refresh'];
+const PUBLIC_PREFIXES   = ['/health', '/swagger'];
+const ALLOWED_API_HOSTS = ['api.cobranzadigital.site', 'localhost', '127.0.0.1'];
+
+export const authInterceptor: HttpInterceptorFn = (req, next) => {
+  const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+
+  if (!token || !shouldAttachToken(req.url)) {
+    return next(req);
+  }
+
+  return next(
+    req.clone({ setHeaders: { Authorization: `Bearer ${token}` } }),
+  );
+};
+```
+
+The interceptor skips token attachment for the three public auth paths, health endpoints, and Swagger. It also validates that the request targets a known API host or the same origin as the Angular app.
+
+### refreshTokenInterceptor
+
+Automatically retries failed requests after refreshing expired access tokens:
+
+```typescript
+// refresh-token.interceptor.ts
+export const refreshTokenInterceptor: HttpInterceptorFn = (req, next) => {
+  const authService = inject(AuthService);
+  const router      = inject(Router);
+
+  return next(req).pipe(
+    catchError((error: unknown) => {
+      if (!(error instanceof HttpErrorResponse) || error.status !== 401) {
+        return throwError(() => error);
+      }
+
+      const refreshToken = authService.getRefreshToken();
+      if (!refreshToken) {
+        authService.logout();
+        void router.navigate(['/login']);
+        return EMPTY;
+      }
+
+      // Deduplicate concurrent refresh calls with a shared observable
+      if (!refreshRequest$) {
+        refreshRequest$ = authService.refresh({ refreshToken }).pipe(
+          shareReplay(1),
+          finalize(() => { refreshRequest$ = null; }),
+        );
+      }
+
+      return refreshRequest$.pipe(
+        switchMap(() => {
+          const accessToken = authService.getAccessToken();
+          if (!accessToken) {
+            authService.logout();
+            void router.navigate(['/login']);
+            return EMPTY;
+          }
+          return next(req.clone({ setHeaders: { Authorization: `Bearer ${accessToken}` } }));
+        }),
+        catchError(() => {
+          authService.logout();
+          void router.navigate(['/login']);
+          return EMPTY;
+        }),
+      );
+    }),
+  );
+};
+```
+
+Concurrent 401 responses share a single refresh request via `shareReplay(1)`, preventing multiple simultaneous `/v1/auth/refresh` calls. Once the new access token is stored, every queued request is retried with the updated `Authorization` header.
+
+### platformTenantInterceptor
+
+For `SuperAdmin` users with an active tenant context, attaches `X-Tenant-Id` to POS admin, report, and catalog snapshot requests. See [Multi-Tenancy](/concepts/multi-tenancy) for details.
+
+## Token refresh flow
+
+```
+1. Request fails with 401
+2. refreshTokenInterceptor catches the error
+3. Reads refresh token from AuthService.getRefreshToken()
+4. No refresh token → logout() + navigate to /login
+5. Has refresh token → POST /api/v1/auth/refresh
+6. Refresh succeeds → storeTokens() saves new pair to localStorage + signals
+7. Original request retried with new Authorization header
+8. Refresh fails → logout() + navigate to /login
+```
+
+## Logout
+
+`AuthService.logout()` removes both tokens from `localStorage` and resets the signals to `null`:
+
+```typescript
+logout() {
+  localStorage.removeItem(ACCESS_TOKEN_KEY);
+  localStorage.removeItem(REFRESH_TOKEN_KEY);
+  this.accessToken.set(null);
+  this.refreshToken.set(null);
+}
+```
+
+Because `authenticated` is a `computed()` signal derived from `accessToken`, all components that bind to `AuthService.isAuthenticated()` or `AuthService.authenticated` react immediately to the logout without requiring manual change detection.
+
+<Warning>
+  Tokens are stored in `localStorage`, which is accessible to JavaScript running on the same origin. Ensure your Content Security Policy (already set to `frame-ancestors 'none'` and `X-Frame-Options: DENY` by the backend middleware) prevents clickjacking attacks that could exfiltrate stored tokens.
+</Warning>

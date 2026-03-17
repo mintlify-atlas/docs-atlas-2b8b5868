@@ -1,0 +1,1051 @@
+---
+title: "Platform Dashboard"
+description: "Cross-tenant KPIs, sales trends, inventory alerts, and operational signals for SuperAdmin operators."
+---
+
+<Warning>
+  All endpoints on this page enforce the `PlatformOnly` policy (`SuperAdmin` role).
+  Do not send `X-Tenant-Id`; it is ignored by all dashboard routes.
+</Warning>
+
+The Platform Dashboard API provides a real-time cross-tenant view of the CobranzaDigital estate. It is grouped into three tiers:
+
+- **v1 — Core KPIs**: summary counts, top-tenants, alerts, inventory and recent adjustments
+- **v2 — Executive metrics**: sales trend, void leaders, stockout hotspots, activity feed, executive signals
+- **v3 — Drill-down**: alert drilldown, per-tenant overview, per-store stockout details
+
+---
+
+## GET /summary
+
+```
+GET /api/v1/platform/dashboard/summary
+```
+
+Returns a platform-wide snapshot including active/inactive counts, today's sales, open shifts, and low-stock alerts.
+
+### Query parameters
+
+<ParamField query="dateFrom" type="string (ISO 8601)">
+  Start of the reporting window. Defaults to the current day in UTC if omitted.
+</ParamField>
+
+<ParamField query="dateTo" type="string (ISO 8601)">
+  End of the reporting window. Defaults to now in UTC if omitted.
+</ParamField>
+
+<ParamField query="threshold" type="number" default="5">
+  Low-stock quantity threshold. Items with `onHand ≤ threshold` are counted as low stock.
+</ParamField>
+
+### Response `200 OK`
+
+<ResponseField name="activeTenants" type="integer">
+  Number of tenants with `isActive = true`.
+</ResponseField>
+
+<ResponseField name="inactiveTenants" type="integer">
+  Number of tenants with `isActive = false`.
+</ResponseField>
+
+<ResponseField name="activeStores" type="integer">
+  Total active stores across all tenants.
+</ResponseField>
+
+<ResponseField name="inactiveStores" type="integer">
+  Total inactive stores across all tenants.
+</ResponseField>
+
+<ResponseField name="totalUsers" type="integer">
+  Total registered users platform-wide.
+</ResponseField>
+
+<ResponseField name="usersWithoutStoreAssignment" type="integer">
+  Users who have no store assigned (potential misconfiguration).
+</ResponseField>
+
+<ResponseField name="tenantsWithoutCatalogTemplate" type="integer">
+  Tenants that have no catalog template linked.
+</ResponseField>
+
+<ResponseField name="storesWithoutAdminStore" type="integer">
+  Stores with no user holding the `AdminStore` role.
+</ResponseField>
+
+<ResponseField name="salesTodayCount" type="integer">
+  Number of completed sales on today's calendar date (UTC).
+</ResponseField>
+
+<ResponseField name="salesTodayAmount" type="number">
+  Total monetary value of today's sales.
+</ResponseField>
+
+<ResponseField name="salesLast7DaysCount" type="integer">
+  Number of completed sales in the last 7 days.
+</ResponseField>
+
+<ResponseField name="salesLast7DaysAmount" type="number">
+  Total monetary value of the last 7 days' sales.
+</ResponseField>
+
+<ResponseField name="openShiftsCount" type="integer">
+  Number of POS shifts currently open.
+</ResponseField>
+
+<ResponseField name="outOfStockItemsCount" type="integer">
+  Catalog items with zero on-hand inventory across all stores.
+</ResponseField>
+
+<ResponseField name="lowStockItemsCount" type="integer">
+  Items with `onHand > 0` but `onHand ≤ threshold`.
+</ResponseField>
+
+<ResponseField name="effectiveDateFromUtc" type="string (ISO 8601)">
+  The resolved start of the reporting window used by the server.
+</ResponseField>
+
+<ResponseField name="effectiveDateToUtc" type="string (ISO 8601)">
+  The resolved end of the reporting window used by the server.
+</ResponseField>
+
+<ResponseField name="effectiveLowStockThreshold" type="number">
+  The threshold value actually applied.
+</ResponseField>
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X GET "https://api.cobranzadigital.com/api/v1/platform/dashboard/summary?threshold=10" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```json Response
+{
+  "activeTenants": 24,
+  "inactiveTenants": 3,
+  "activeStores": 61,
+  "inactiveStores": 5,
+  "totalUsers": 342,
+  "usersWithoutStoreAssignment": 7,
+  "tenantsWithoutCatalogTemplate": 2,
+  "storesWithoutAdminStore": 4,
+  "salesTodayCount": 198,
+  "salesTodayAmount": 87450.00,
+  "salesLast7DaysCount": 1104,
+  "salesLast7DaysAmount": 512300.50,
+  "openShiftsCount": 12,
+  "outOfStockItemsCount": 18,
+  "lowStockItemsCount": 34,
+  "effectiveDateFromUtc": "2026-03-17T00:00:00Z",
+  "effectiveDateToUtc": "2026-03-17T23:59:59Z",
+  "effectiveLowStockThreshold": 10
+}
+```
+</CodeGroup>
+
+---
+
+## GET /top-tenants
+
+```
+GET /api/v1/platform/dashboard/top-tenants
+```
+
+Ranks tenants by total sales volume within the requested date range.
+
+### Query parameters
+
+<ParamField query="dateFrom" type="string (ISO 8601)">
+  Range start. Defaults to 30 days ago.
+</ParamField>
+
+<ParamField query="dateTo" type="string (ISO 8601)">
+  Range end. Defaults to now.
+</ParamField>
+
+<ParamField query="top" type="integer" default="10">
+  Maximum number of tenants to return. Max `50`.
+</ParamField>
+
+<ParamField query="includeInactive" type="boolean" default="false">
+  When `true`, inactive tenants are included in the ranking.
+</ParamField>
+
+### Response `200 OK`
+
+<ResponseField name="items" type="array">
+  Ordered list of top tenants, highest sales first.
+  <Expandable title="PlatformTopTenantRowDto">
+    <ResponseField name="tenantId" type="string (uuid)">Tenant identifier.</ResponseField>
+    <ResponseField name="tenantName" type="string">Display name of the tenant.</ResponseField>
+    <ResponseField name="verticalId" type="string (uuid)">Vertical (industry segment) identifier.</ResponseField>
+    <ResponseField name="verticalName" type="string | null">Display name of the vertical, if available.</ResponseField>
+    <ResponseField name="storeCount" type="integer">Number of stores belonging to the tenant.</ResponseField>
+    <ResponseField name="salesCount" type="integer">Completed sales in the requested range.</ResponseField>
+    <ResponseField name="salesAmount" type="number">Total sales amount in the requested range.</ResponseField>
+    <ResponseField name="averageTicket" type="number">Average sale amount (`salesAmount / salesCount`).</ResponseField>
+    <ResponseField name="voidedSalesCount" type="integer">Number of voided sales in the requested range.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="effectiveDateFromUtc" type="string (ISO 8601)">Resolved range start.</ResponseField>
+<ResponseField name="effectiveDateToUtc" type="string (ISO 8601)">Resolved range end.</ResponseField>
+<ResponseField name="top" type="integer">The `top` value applied.</ResponseField>
+<ResponseField name="includeInactive" type="boolean">Whether inactive tenants were included.</ResponseField>
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X GET "https://api.cobranzadigital.com/api/v1/platform/dashboard/top-tenants?top=5&includeInactive=false" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```json Response
+{
+  "items": [
+    {
+      "tenantId": "11111111-0000-0000-0000-000000000001",
+      "tenantName": "Restaurante El Norte",
+      "verticalId": "aaaa0000-0000-0000-0000-000000000001",
+      "verticalName": "Restaurantes",
+      "storeCount": 4,
+      "salesCount": 312,
+      "salesAmount": 148200.00,
+      "averageTicket": 475.00,
+      "voidedSalesCount": 6
+    }
+  ],
+  "effectiveDateFromUtc": "2026-02-15T00:00:00Z",
+  "effectiveDateToUtc": "2026-03-17T23:59:59Z",
+  "top": 5,
+  "includeInactive": false
+}
+```
+</CodeGroup>
+
+---
+
+## GET /alerts
+
+```
+GET /api/v1/platform/dashboard/alerts
+```
+
+Returns a categorized list of operational alerts across the platform.
+
+### Alert codes
+
+| Code | Description |
+|------|-------------|
+| `TENANT_WITHOUT_TEMPLATE` | Tenant has no catalog template assigned. |
+| `STORE_WITHOUT_ADMINSTORE` | Store has no user with the `AdminStore` role. |
+| `STORE_SCOPED_USER_WITHOUT_STORE` | User scoped to a store but has no store assignment. |
+
+### Response `200 OK`
+
+<ResponseField name="alerts" type="array">
+  <Expandable title="PlatformDashboardAlertDto">
+    <ResponseField name="code" type="string">Machine-readable alert code (see table above).</ResponseField>
+    <ResponseField name="severity" type="string">Alert severity level, e.g. `warning` or `error`.</ResponseField>
+    <ResponseField name="count" type="integer">Number of entities affected by this alert.</ResponseField>
+    <ResponseField name="description" type="string">Human-readable description of the alert.</ResponseField>
+    <ResponseField name="topExamples" type="string[]">Up to 3 example entity names affected by the alert.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X GET https://api.cobranzadigital.com/api/v1/platform/dashboard/alerts \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```json Response
+{
+  "alerts": [
+    {
+      "code": "STORE_WITHOUT_ADMINSTORE",
+      "severity": "warning",
+      "count": 4,
+      "description": "Stores with no AdminStore user assigned.",
+      "topExamples": ["Sucursal Norte", "Sucursal Oriente", "Sucursal Sur"]
+    }
+  ]
+}
+```
+</CodeGroup>
+
+---
+
+## GET /alerts/drilldown
+
+```
+GET /api/v1/platform/dashboard/alerts/drilldown
+```
+
+Returns row-level detail for a specific alert code, optionally filtered to a single tenant or store.
+
+### Query parameters
+
+<ParamField query="code" type="string" required>
+  Alert code to drill into. Must be one of `TENANT_WITHOUT_TEMPLATE`, `STORE_WITHOUT_ADMINSTORE`, or `STORE_SCOPED_USER_WITHOUT_STORE`. Returns `400` for unknown codes.
+</ParamField>
+
+<ParamField query="take" type="integer" default="100">
+  Maximum number of rows to return. Max `500`.
+</ParamField>
+
+<ParamField query="tenantId" type="string (uuid)">
+  Limit results to a specific tenant.
+</ParamField>
+
+<ParamField query="storeId" type="string (uuid)">
+  Limit results to a specific store.
+</ParamField>
+
+### Response `200 OK`
+
+<ResponseField name="code" type="string">The alert code that was queried.</ResponseField>
+
+<ResponseField name="items" type="array">
+  <Expandable title="PlatformDashboardAlertDrilldownItemDto">
+    <ResponseField name="tenantId" type="string (uuid) | null">Affected tenant, if applicable.</ResponseField>
+    <ResponseField name="tenantName" type="string | null">Tenant display name.</ResponseField>
+    <ResponseField name="storeId" type="string (uuid) | null">Affected store, if applicable.</ResponseField>
+    <ResponseField name="storeName" type="string | null">Store display name.</ResponseField>
+    <ResponseField name="userId" type="string (uuid) | null">Affected user, if applicable.</ResponseField>
+    <ResponseField name="userName" type="string | null">User's username.</ResponseField>
+    <ResponseField name="email" type="string | null">User's email address.</ResponseField>
+    <ResponseField name="role" type="string | null">User's role, if relevant.</ResponseField>
+    <ResponseField name="description" type="string">Human-readable explanation of why this row is flagged.</ResponseField>
+    <ResponseField name="reason" type="string | null">Additional machine-readable reason code.</ResponseField>
+    <ResponseField name="metadata" type="object | null">Arbitrary key/value pairs with extra context.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Status codes
+
+| Code | Description |
+|------|-------------|
+| `200` | Success (may return `items: []` when no issues found). |
+| `400` | `code` is missing or not a recognized alert code. |
+| `401` | Missing or invalid token. |
+| `403` | Caller is not a SuperAdmin. |
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X GET "https://api.cobranzadigital.com/api/v1/platform/dashboard/alerts/drilldown?code=STORE_WITHOUT_ADMINSTORE&take=50" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```json Response
+{
+  "code": "STORE_WITHOUT_ADMINSTORE",
+  "items": [
+    {
+      "tenantId": "11111111-0000-0000-0000-000000000001",
+      "tenantName": "Restaurante El Norte",
+      "storeId": "22222222-0000-0000-0000-000000000002",
+      "storeName": "Sucursal Norte",
+      "userId": null,
+      "userName": null,
+      "email": null,
+      "role": null,
+      "description": "Store has no AdminStore user assigned.",
+      "reason": null,
+      "metadata": null
+    }
+  ]
+}
+```
+</CodeGroup>
+
+---
+
+## GET /recent-inventory-adjustments
+
+```
+GET /api/v1/platform/dashboard/recent-inventory-adjustments
+```
+
+Returns the most recent inventory adjustment events across the platform.
+
+### Query parameters
+
+<ParamField query="take" type="integer" default="20">
+  Number of adjustments to return. Max `100`.
+</ParamField>
+
+<ParamField query="reason" type="string">
+  Filter by adjustment reason string.
+</ParamField>
+
+<ParamField query="tenantId" type="string (uuid)">
+  Limit results to a specific tenant.
+</ParamField>
+
+<ParamField query="storeId" type="string (uuid)">
+  Limit results to a specific store.
+</ParamField>
+
+### Response `200 OK`
+
+<ResponseField name="items" type="array">
+  <Expandable title="PlatformRecentInventoryAdjustmentDto">
+    <ResponseField name="adjustmentId" type="string (uuid)">Unique ID of the adjustment record.</ResponseField>
+    <ResponseField name="tenantId" type="string (uuid)">Owning tenant.</ResponseField>
+    <ResponseField name="tenantName" type="string">Tenant display name.</ResponseField>
+    <ResponseField name="storeId" type="string (uuid)">Store where the adjustment occurred.</ResponseField>
+    <ResponseField name="storeName" type="string">Store display name.</ResponseField>
+    <ResponseField name="itemType" type="string">Type of item: `Product`, `Extra`, or `OptionItem`.</ResponseField>
+    <ResponseField name="itemId" type="string (uuid)">Catalog item identifier.</ResponseField>
+    <ResponseField name="itemName" type="string">Catalog item display name.</ResponseField>
+    <ResponseField name="itemSku" type="string | null">Item SKU, if set.</ResponseField>
+    <ResponseField name="qtyBefore" type="number">Stock on-hand before adjustment.</ResponseField>
+    <ResponseField name="qtyDelta" type="number">Quantity change (positive = added, negative = removed).</ResponseField>
+    <ResponseField name="qtyAfter" type="number">Stock on-hand after adjustment.</ResponseField>
+    <ResponseField name="reason" type="string">Human-readable reason for the adjustment.</ResponseField>
+    <ResponseField name="referenceType" type="string | null">Type of the originating reference document.</ResponseField>
+    <ResponseField name="referenceId" type="string (uuid) | null">ID of the originating reference document.</ResponseField>
+    <ResponseField name="movementKind" type="string | null">Describes the direction/kind of inventory movement.</ResponseField>
+    <ResponseField name="createdAtUtc" type="string (ISO 8601)">UTC timestamp of the adjustment.</ResponseField>
+    <ResponseField name="performedByUserId" type="string (uuid) | null">ID of the user who performed the adjustment.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="take" type="integer">The effective `take` value used.</ResponseField>
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X GET "https://api.cobranzadigital.com/api/v1/platform/dashboard/recent-inventory-adjustments?take=5" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```json Response
+{
+  "items": [
+    {
+      "adjustmentId": "ffffffff-0000-0000-0000-000000000001",
+      "tenantId": "11111111-0000-0000-0000-000000000001",
+      "tenantName": "Restaurante El Norte",
+      "storeId": "22222222-0000-0000-0000-000000000001",
+      "storeName": "Sucursal Matriz",
+      "itemType": "Product",
+      "itemId": "cccccccc-0000-0000-0000-000000000001",
+      "itemName": "Coca-Cola 355ml",
+      "itemSku": "COKE-355",
+      "qtyBefore": 12,
+      "qtyDelta": -3,
+      "qtyAfter": 9,
+      "reason": "Sale",
+      "referenceType": "Sale",
+      "referenceId": "dddddddd-0000-0000-0000-000000000001",
+      "movementKind": "Outbound",
+      "createdAtUtc": "2026-03-17T11:45:00Z",
+      "performedByUserId": "eeeeeeee-0000-0000-0000-000000000001"
+    }
+  ],
+  "take": 5
+}
+```
+</CodeGroup>
+
+---
+
+## GET /out-of-stock
+
+```
+GET /api/v1/platform/dashboard/out-of-stock
+```
+
+Lists catalog items with zero (or untracked) inventory across all stores, with optional filters.
+
+### Query parameters
+
+<ParamField query="tenantId" type="string (uuid)">
+  Filter to a specific tenant.
+</ParamField>
+
+<ParamField query="storeId" type="string (uuid)">
+  Filter to a specific store.
+</ParamField>
+
+<ParamField query="itemType" type="string">
+  Filter by item type. One of `Product`, `Extra`, or `OptionItem`.
+</ParamField>
+
+<ParamField query="search" type="string">
+  Full-text search against item name or SKU.
+</ParamField>
+
+<ParamField query="onlyTracked" type="boolean" default="true">
+  When `true`, only returns items for which inventory tracking is enabled.
+</ParamField>
+
+<ParamField query="top" type="integer" default="50">
+  Maximum number of items to return. Max `200`.
+</ParamField>
+
+### Response `200 OK`
+
+<ResponseField name="items" type="array">
+  <Expandable title="PlatformOutOfStockRowDto">
+    <ResponseField name="tenantId" type="string (uuid)">Owning tenant.</ResponseField>
+    <ResponseField name="tenantName" type="string">Tenant display name.</ResponseField>
+    <ResponseField name="storeId" type="string (uuid)">Store where the item is out of stock.</ResponseField>
+    <ResponseField name="storeName" type="string">Store display name.</ResponseField>
+    <ResponseField name="itemType" type="string">Item type: `Product`, `Extra`, or `OptionItem`.</ResponseField>
+    <ResponseField name="itemId" type="string (uuid)">Catalog item identifier.</ResponseField>
+    <ResponseField name="itemName" type="string">Item display name.</ResponseField>
+    <ResponseField name="itemSku" type="string | null">Item SKU if set.</ResponseField>
+    <ResponseField name="stockOnHandQty" type="number">Current on-hand quantity (0 or negative).</ResponseField>
+    <ResponseField name="updatedAtUtc" type="string (ISO 8601)">When inventory was last modified.</ResponseField>
+    <ResponseField name="lastAdjustmentAtUtc" type="string (ISO 8601) | null">Timestamp of the last inventory adjustment for this item.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X GET "https://api.cobranzadigital.com/api/v1/platform/dashboard/out-of-stock?itemType=Product&top=10" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```json Response
+{
+  "items": [
+    {
+      "tenantId": "11111111-0000-0000-0000-000000000001",
+      "tenantName": "Restaurante El Norte",
+      "storeId": "22222222-0000-0000-0000-000000000002",
+      "storeName": "Sucursal Norte",
+      "itemType": "Product",
+      "itemId": "cccccccc-0000-0000-0000-000000000002",
+      "itemName": "Agua Mineral 500ml",
+      "itemSku": "AGUA-500",
+      "stockOnHandQty": 0,
+      "updatedAtUtc": "2026-03-17T08:00:00Z",
+      "lastAdjustmentAtUtc": "2026-03-16T19:00:00Z"
+    }
+  ]
+}
+```
+</CodeGroup>
+
+---
+
+## GET /sales-trend
+
+```
+GET /api/v1/platform/dashboard/sales-trend
+```
+
+Returns time-bucketed sales data for charting revenue trends.
+
+### Query parameters
+
+<ParamField query="dateFrom" type="string (ISO 8601)">
+  Start of the trend window.
+</ParamField>
+
+<ParamField query="dateTo" type="string (ISO 8601)">
+  End of the trend window.
+</ParamField>
+
+<ParamField query="granularity" type="string" default="day">
+  Time bucket size. One of `day` or `week`.
+</ParamField>
+
+### Response `200 OK`
+
+<ResponseField name="items" type="array">
+  <Expandable title="PlatformSalesTrendPointDto">
+    <ResponseField name="bucketStartUtc" type="string (ISO 8601)">UTC start of the time bucket.</ResponseField>
+    <ResponseField name="bucketLabel" type="string">Display label for the bucket (e.g. `"Mar 17"`).</ResponseField>
+    <ResponseField name="salesCount" type="integer">Completed sales in this bucket.</ResponseField>
+    <ResponseField name="salesAmount" type="number">Total sales amount in this bucket.</ResponseField>
+    <ResponseField name="voidedSalesCount" type="integer">Voided sales in this bucket.</ResponseField>
+    <ResponseField name="averageTicket" type="number">Average sale value in this bucket.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="effectiveDateFromUtc" type="string (ISO 8601)">Resolved range start.</ResponseField>
+<ResponseField name="effectiveDateToUtc" type="string (ISO 8601)">Resolved range end.</ResponseField>
+<ResponseField name="granularity" type="string">The granularity applied (`day` or `week`).</ResponseField>
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X GET "https://api.cobranzadigital.com/api/v1/platform/dashboard/sales-trend?granularity=day&dateFrom=2026-03-10T00:00:00Z" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```json Response
+{
+  "items": [
+    {
+      "bucketStartUtc": "2026-03-10T00:00:00Z",
+      "bucketLabel": "Mar 10",
+      "salesCount": 145,
+      "salesAmount": 68250.00,
+      "voidedSalesCount": 3,
+      "averageTicket": 470.69
+    }
+  ],
+  "effectiveDateFromUtc": "2026-03-10T00:00:00Z",
+  "effectiveDateToUtc": "2026-03-17T23:59:59Z",
+  "granularity": "day"
+}
+```
+</CodeGroup>
+
+---
+
+## GET /top-void-tenants
+
+```
+GET /api/v1/platform/dashboard/top-void-tenants
+```
+
+Ranks tenants by voided-sales volume to help identify fraud or operational issues.
+
+### Query parameters
+
+<ParamField query="dateFrom" type="string (ISO 8601)">Range start.</ParamField>
+<ParamField query="dateTo" type="string (ISO 8601)">Range end.</ParamField>
+<ParamField query="top" type="integer" default="10">Maximum tenants to return. Max `50`.</ParamField>
+
+### Response `200 OK`
+
+<ResponseField name="items" type="array">
+  <Expandable title="PlatformTopVoidTenantRowDto">
+    <ResponseField name="tenantId" type="string (uuid)">Tenant identifier.</ResponseField>
+    <ResponseField name="tenantName" type="string">Tenant display name.</ResponseField>
+    <ResponseField name="verticalId" type="string (uuid)">Vertical identifier.</ResponseField>
+    <ResponseField name="verticalName" type="string | null">Vertical display name.</ResponseField>
+    <ResponseField name="voidedSalesCount" type="integer">Total voided sales in range.</ResponseField>
+    <ResponseField name="voidedSalesAmount" type="number">Total amount of voided sales.</ResponseField>
+    <ResponseField name="totalSalesCount" type="integer">All sales (completed + voided) in range.</ResponseField>
+    <ResponseField name="voidRate" type="number">Ratio of voided to total sales (`0`–`1`).</ResponseField>
+    <ResponseField name="storeCount" type="integer">Number of stores for this tenant.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="effectiveDateFromUtc" type="string (ISO 8601)">Resolved range start.</ResponseField>
+<ResponseField name="effectiveDateToUtc" type="string (ISO 8601)">Resolved range end.</ResponseField>
+<ResponseField name="top" type="integer">The `top` value applied.</ResponseField>
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X GET "https://api.cobranzadigital.com/api/v1/platform/dashboard/top-void-tenants?top=5" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```json Response
+{
+  "items": [
+    {
+      "tenantId": "11111111-0000-0000-0000-000000000002",
+      "tenantName": "Tienda Beta",
+      "verticalId": "aaaa0000-0000-0000-0000-000000000002",
+      "verticalName": "Retail",
+      "voidedSalesCount": 42,
+      "voidedSalesAmount": 19800.00,
+      "totalSalesCount": 310,
+      "voidRate": 0.1355,
+      "storeCount": 2
+    }
+  ],
+  "effectiveDateFromUtc": "2026-02-15T00:00:00Z",
+  "effectiveDateToUtc": "2026-03-17T23:59:59Z",
+  "top": 5
+}
+```
+</CodeGroup>
+
+---
+
+## GET /stockout-hotspots
+
+```
+GET /api/v1/platform/dashboard/stockout-hotspots
+```
+
+Identifies stores with the most out-of-stock and low-stock items.
+
+### Query parameters
+
+<ParamField query="threshold" type="number" default="5">
+  Quantity at or below which an item is considered low stock.
+</ParamField>
+
+<ParamField query="top" type="integer" default="10">
+  Maximum number of stores to return. Max `100`.
+</ParamField>
+
+<ParamField query="itemType" type="string">
+  Filter by item type: `Product`, `Extra`, or `OptionItem`.
+</ParamField>
+
+### Response `200 OK`
+
+<ResponseField name="items" type="array">
+  <Expandable title="PlatformStockoutHotspotRowDto">
+    <ResponseField name="tenantId" type="string (uuid)">Owning tenant.</ResponseField>
+    <ResponseField name="tenantName" type="string">Tenant display name.</ResponseField>
+    <ResponseField name="storeId" type="string (uuid)">Store identifier.</ResponseField>
+    <ResponseField name="storeName" type="string">Store display name.</ResponseField>
+    <ResponseField name="outOfStockItemsCount" type="integer">Items with zero on-hand.</ResponseField>
+    <ResponseField name="lowStockItemsCount" type="integer">Items with `0 < onHand ≤ threshold`.</ResponseField>
+    <ResponseField name="lastInventoryMovementAtUtc" type="string (ISO 8601) | null">Timestamp of the most recent inventory movement for this store.</ResponseField>
+    <ResponseField name="trackedItemsCount" type="integer">Total inventory-tracked items in this store.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="threshold" type="number">Effective low-stock threshold.</ResponseField>
+<ResponseField name="top" type="integer">Effective `top` value.</ResponseField>
+<ResponseField name="itemType" type="string | null">Item type filter applied, if any.</ResponseField>
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X GET "https://api.cobranzadigital.com/api/v1/platform/dashboard/stockout-hotspots?threshold=3&top=5" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```json Response
+{
+  "items": [
+    {
+      "tenantId": "11111111-0000-0000-0000-000000000001",
+      "tenantName": "Restaurante El Norte",
+      "storeId": "22222222-0000-0000-0000-000000000003",
+      "storeName": "Sucursal Sur",
+      "outOfStockItemsCount": 8,
+      "lowStockItemsCount": 15,
+      "lastInventoryMovementAtUtc": "2026-03-17T09:30:00Z",
+      "trackedItemsCount": 80
+    }
+  ],
+  "threshold": 3,
+  "top": 5,
+  "itemType": null
+}
+```
+</CodeGroup>
+
+---
+
+## GET /activity-feed
+
+```
+GET /api/v1/platform/dashboard/activity-feed
+```
+
+Returns a chronological feed of recent platform events (sales, voids, inventory adjustments).
+
+### Query parameters
+
+<ParamField query="take" type="integer" default="20">
+  Number of events to return. Max `100`.
+</ParamField>
+
+<ParamField query="eventType" type="string">
+  Filter by event type. One of `SaleCreated`, `SaleVoided`, or `InventoryAdjusted`.
+</ParamField>
+
+### Response `200 OK`
+
+<ResponseField name="items" type="array">
+  <Expandable title="PlatformActivityFeedItemDto">
+    <ResponseField name="eventType" type="string">Type of event: `SaleCreated`, `SaleVoided`, or `InventoryAdjusted`.</ResponseField>
+    <ResponseField name="occurredAtUtc" type="string (ISO 8601)">When the event occurred.</ResponseField>
+    <ResponseField name="tenantId" type="string (uuid)">Tenant context.</ResponseField>
+    <ResponseField name="tenantName" type="string">Tenant display name.</ResponseField>
+    <ResponseField name="storeId" type="string (uuid)">Store context.</ResponseField>
+    <ResponseField name="storeName" type="string">Store display name.</ResponseField>
+    <ResponseField name="title" type="string">Short event title for display.</ResponseField>
+    <ResponseField name="description" type="string">Longer event description.</ResponseField>
+    <ResponseField name="referenceId" type="string (uuid) | null">ID of the related entity (sale ID, adjustment ID, etc.).</ResponseField>
+    <ResponseField name="severity" type="string">Display severity: `info`, `warning`, or `error`.</ResponseField>
+    <ResponseField name="actorUserId" type="string (uuid) | null">ID of the user who triggered the event.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="take" type="integer">Effective `take` applied.</ResponseField>
+<ResponseField name="eventType" type="string | null">Event type filter applied, if any.</ResponseField>
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X GET "https://api.cobranzadigital.com/api/v1/platform/dashboard/activity-feed?take=10&eventType=SaleVoided" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```json Response
+{
+  "items": [
+    {
+      "eventType": "SaleVoided",
+      "occurredAtUtc": "2026-03-17T11:20:00Z",
+      "tenantId": "11111111-0000-0000-0000-000000000002",
+      "tenantName": "Tienda Beta",
+      "storeId": "22222222-0000-0000-0000-000000000004",
+      "storeName": "Sucursal Centro",
+      "title": "Venta anulada",
+      "description": "Folio VT-0042 anulada por CashierError.",
+      "referenceId": "dddddddd-0000-0000-0000-000000000002",
+      "severity": "warning",
+      "actorUserId": "eeeeeeee-0000-0000-0000-000000000002"
+    }
+  ],
+  "take": 10,
+  "eventType": "SaleVoided"
+}
+```
+</CodeGroup>
+
+---
+
+## GET /executive-signals
+
+```
+GET /api/v1/platform/dashboard/executive-signals
+```
+
+High-level executive KPIs including growth rate, void rate, and risk signals.
+
+### Query parameters
+
+<ParamField query="dateFrom" type="string (ISO 8601)">Range start.</ParamField>
+<ParamField query="dateTo" type="string (ISO 8601)">Range end.</ParamField>
+<ParamField query="previousPeriodCompare" type="boolean" default="true">
+  When `true`, growth rate is calculated relative to the equivalent prior period.
+</ParamField>
+
+### Response `200 OK`
+
+<ResponseField name="fastestGrowingTenantId" type="string (uuid) | null">Tenant with the highest period-over-period sales growth.</ResponseField>
+<ResponseField name="fastestGrowingTenantName" type="string | null">Display name of the fastest-growing tenant.</ResponseField>
+<ResponseField name="salesGrowthRatePercent" type="number | null">Growth rate of the fastest-growing tenant (percentage points).</ResponseField>
+<ResponseField name="voidRatePercent" type="number">Platform-wide void rate as a percentage of total sales.</ResponseField>
+<ResponseField name="tenantsWithNoSalesInRangeCount" type="integer">Number of active tenants with zero sales in the requested range.</ResponseField>
+<ResponseField name="storesWithNoAdminStoreCount" type="integer">Stores missing an `AdminStore` role user.</ResponseField>
+<ResponseField name="tenantsWithNoCatalogTemplateCount" type="integer">Tenants with no catalog template assigned.</ResponseField>
+<ResponseField name="storesWithOutOfStockCount" type="integer">Stores that have at least one out-of-stock item.</ResponseField>
+<ResponseField name="inventoryAdjustmentCountInRange" type="integer">Total inventory adjustments performed in the range.</ResponseField>
+<ResponseField name="topRiskTenantId" type="string (uuid) | null">Tenant flagged as highest operational risk.</ResponseField>
+<ResponseField name="topRiskTenantName" type="string | null">Display name of the top-risk tenant.</ResponseField>
+<ResponseField name="effectiveDateFromUtc" type="string (ISO 8601)">Resolved range start.</ResponseField>
+<ResponseField name="effectiveDateToUtc" type="string (ISO 8601)">Resolved range end.</ResponseField>
+<ResponseField name="previousPeriodCompare" type="boolean">Whether prior-period comparison was applied.</ResponseField>
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X GET "https://api.cobranzadigital.com/api/v1/platform/dashboard/executive-signals?previousPeriodCompare=true" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```json Response
+{
+  "fastestGrowingTenantId": "11111111-0000-0000-0000-000000000003",
+  "fastestGrowingTenantName": "Cafetería Moderna",
+  "salesGrowthRatePercent": 18.4,
+  "voidRatePercent": 3.2,
+  "tenantsWithNoSalesInRangeCount": 1,
+  "storesWithNoAdminStoreCount": 4,
+  "tenantsWithNoCatalogTemplateCount": 2,
+  "storesWithOutOfStockCount": 11,
+  "inventoryAdjustmentCountInRange": 87,
+  "topRiskTenantId": "11111111-0000-0000-0000-000000000002",
+  "topRiskTenantName": "Tienda Beta",
+  "effectiveDateFromUtc": "2026-03-10T00:00:00Z",
+  "effectiveDateToUtc": "2026-03-17T23:59:59Z",
+  "previousPeriodCompare": true
+}
+```
+</CodeGroup>
+
+---
+
+## GET /tenants/{tenantId}/overview
+
+```
+GET /api/v1/platform/dashboard/tenants/{tenantId}/overview
+```
+
+Returns a detailed per-tenant health overview including store counts, sales metrics, and inventory health.
+
+### Path parameters
+
+<ParamField path="tenantId" type="string (uuid)" required>
+  UUID of the tenant to inspect.
+</ParamField>
+
+### Query parameters
+
+<ParamField query="dateFrom" type="string (ISO 8601)">Range start.</ParamField>
+<ParamField query="dateTo" type="string (ISO 8601)">Range end.</ParamField>
+<ParamField query="threshold" type="number" default="5">Low-stock threshold.</ParamField>
+
+### Response `200 OK`
+
+<ResponseField name="tenantId" type="string (uuid)">Tenant identifier.</ResponseField>
+<ResponseField name="tenantName" type="string">Tenant display name.</ResponseField>
+<ResponseField name="verticalId" type="string (uuid)">Vertical identifier.</ResponseField>
+<ResponseField name="verticalName" type="string | null">Vertical display name.</ResponseField>
+<ResponseField name="storeCount" type="integer">Total stores for this tenant.</ResponseField>
+<ResponseField name="activeStoreCount" type="integer">Active stores for this tenant.</ResponseField>
+<ResponseField name="totalUsers" type="integer">Users belonging to this tenant.</ResponseField>
+<ResponseField name="usersWithoutStoreAssignmentCount" type="integer">Tenant users with no store assigned.</ResponseField>
+<ResponseField name="salesInRangeCount" type="integer">Completed sales in the requested range.</ResponseField>
+<ResponseField name="salesInRangeAmount" type="number">Total sales amount in range.</ResponseField>
+<ResponseField name="voidedSalesCount" type="integer">Voided sales in range.</ResponseField>
+<ResponseField name="outOfStockItemsCount" type="integer">Out-of-stock items across this tenant's stores.</ResponseField>
+<ResponseField name="lowStockItemsCount" type="integer">Low-stock items across this tenant's stores.</ResponseField>
+<ResponseField name="lastInventoryAdjustmentAtUtc" type="string (ISO 8601) | null">Most recent inventory adjustment timestamp.</ResponseField>
+<ResponseField name="hasCatalogTemplate" type="boolean">Whether the tenant has a catalog template assigned.</ResponseField>
+<ResponseField name="storesWithoutAdminStoreCount" type="integer">Stores missing an `AdminStore` user.</ResponseField>
+<ResponseField name="effectiveDateFromUtc" type="string (ISO 8601)">Resolved range start.</ResponseField>
+<ResponseField name="effectiveDateToUtc" type="string (ISO 8601)">Resolved range end.</ResponseField>
+<ResponseField name="effectiveThreshold" type="number">Low-stock threshold applied.</ResponseField>
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X GET "https://api.cobranzadigital.com/api/v1/platform/dashboard/tenants/11111111-0000-0000-0000-000000000001/overview" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```json Response
+{
+  "tenantId": "11111111-0000-0000-0000-000000000001",
+  "tenantName": "Restaurante El Norte",
+  "verticalId": "aaaa0000-0000-0000-0000-000000000001",
+  "verticalName": "Restaurantes",
+  "storeCount": 4,
+  "activeStoreCount": 4,
+  "totalUsers": 28,
+  "usersWithoutStoreAssignmentCount": 1,
+  "salesInRangeCount": 312,
+  "salesInRangeAmount": 148200.00,
+  "voidedSalesCount": 6,
+  "outOfStockItemsCount": 3,
+  "lowStockItemsCount": 9,
+  "lastInventoryAdjustmentAtUtc": "2026-03-17T10:00:00Z",
+  "hasCatalogTemplate": true,
+  "storesWithoutAdminStoreCount": 0,
+  "effectiveDateFromUtc": "2026-03-10T00:00:00Z",
+  "effectiveDateToUtc": "2026-03-17T23:59:59Z",
+  "effectiveThreshold": 5
+}
+```
+</CodeGroup>
+
+---
+
+## GET /stores/{storeId}/stockout-details
+
+```
+GET /api/v1/platform/dashboard/stores/{storeId}/stockout-details
+```
+
+Returns per-item inventory detail for a single store, filtered by stock-level mode.
+
+### Path parameters
+
+<ParamField path="storeId" type="string (uuid)" required>
+  UUID of the store.
+</ParamField>
+
+### Query parameters
+
+<ParamField query="itemType" type="string">
+  Filter by item type: `Product`, `Extra`, or `OptionItem`.
+</ParamField>
+
+<ParamField query="search" type="string">
+  Search against item name or SKU.
+</ParamField>
+
+<ParamField query="threshold" type="number" default="5">
+  Quantity threshold for low-stock classification.
+</ParamField>
+
+<ParamField query="mode" type="string" default="out-of-stock">
+  Which items to include. One of `out-of-stock`, `low-stock`, or `all`.
+</ParamField>
+
+<ParamField query="take" type="integer" default="200">
+  Maximum items to return. Max `500`.
+</ParamField>
+
+### Response `200 OK`
+
+<ResponseField name="storeId" type="string (uuid)">Store identifier.</ResponseField>
+<ResponseField name="storeName" type="string">Store display name.</ResponseField>
+<ResponseField name="tenantId" type="string (uuid)">Owning tenant identifier.</ResponseField>
+<ResponseField name="tenantName" type="string">Tenant display name.</ResponseField>
+<ResponseField name="mode" type="string">Effective mode filter applied.</ResponseField>
+<ResponseField name="effectiveThreshold" type="number">Threshold actually used.</ResponseField>
+
+<ResponseField name="items" type="array">
+  <Expandable title="PlatformStoreStockoutDetailItemDto">
+    <ResponseField name="itemType" type="string">Item type: `Product`, `Extra`, or `OptionItem`.</ResponseField>
+    <ResponseField name="itemId" type="string (uuid)">Catalog item identifier.</ResponseField>
+    <ResponseField name="itemName" type="string">Item display name.</ResponseField>
+    <ResponseField name="itemSku" type="string | null">SKU, if set.</ResponseField>
+    <ResponseField name="stockOnHandQty" type="number">Current on-hand quantity.</ResponseField>
+    <ResponseField name="isInventoryTracked" type="boolean">Whether inventory tracking is enabled for this item.</ResponseField>
+    <ResponseField name="availabilityReason" type="string">Machine-readable reason for the availability status.</ResponseField>
+    <ResponseField name="lastAdjustmentAtUtc" type="string (ISO 8601) | null">Timestamp of the last inventory adjustment.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example
+
+<CodeGroup>
+```bash curl
+curl -X GET "https://api.cobranzadigital.com/api/v1/platform/dashboard/stores/22222222-0000-0000-0000-000000000001/stockout-details?mode=low-stock&threshold=5" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```json Response
+{
+  "storeId": "22222222-0000-0000-0000-000000000001",
+  "storeName": "Sucursal Matriz",
+  "tenantId": "11111111-0000-0000-0000-000000000001",
+  "tenantName": "Restaurante El Norte",
+  "mode": "low-stock",
+  "effectiveThreshold": 5,
+  "items": [
+    {
+      "itemType": "Product",
+      "itemId": "cccccccc-0000-0000-0000-000000000003",
+      "itemName": "Refresco Limón 355ml",
+      "itemSku": "REF-355",
+      "stockOnHandQty": 3,
+      "isInventoryTracked": true,
+      "availabilityReason": "LowStock",
+      "lastAdjustmentAtUtc": "2026-03-16T22:00:00Z"
+    }
+  ]
+}
+```
+</CodeGroup>

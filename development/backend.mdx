@@ -1,0 +1,280 @@
+---
+title: Backend Development
+description: .NET 10 Clean Architecture API structure, layers, authorization policies, middleware, and configuration for CobranzaDigital.
+---
+
+## Architecture
+
+The backend follows Clean Architecture with four layers, each in its own project under `backend/src/`:
+
+```
+backend/src/
+├── CobranzaDigital.Domain/          # Entities, value objects, domain logic
+├── CobranzaDigital.Application/     # Use cases, interfaces, validators, DTOs
+├── CobranzaDigital.Infrastructure/  # EF Core, Identity, JWT, audit logging
+└── CobranzaDigital.Api/             # Controllers, middleware, Program.cs
+```
+
+**Dependency direction:** `Api` → `Application` → `Domain`. `Infrastructure` implements `Application` interfaces and is registered at the composition root in `Program.cs`.
+
+## Domain layer
+
+`CobranzaDigital.Domain` contains entities and common primitives with no external dependencies.
+
+```
+CobranzaDigital.Domain/
+├── Common/     # Base classes and shared primitives
+└── Entities/   # Domain entities (AuditLog, POS entities, etc.)
+```
+
+## Application layer
+
+`CobranzaDigital.Application` defines use-case services, interfaces, and contracts:
+
+```
+CobranzaDigital.Application/
+├── Auditing/      # IAuditLogger, AuditEntry
+├── Common/        # Shared helpers
+├── Contracts/     # Request/response DTOs
+├── Interfaces/    # Service abstractions (IPosCatalogService, IPosSalesService, etc.)
+├── Options/       # Strongly-typed options (JwtOptions, etc.)
+├── Services/      # Application service implementations
+└── Validators/    # FluentValidation validators
+```
+
+Fluent Validation (v12) is used throughout. Validation failures are returned as RFC 9457 `ProblemDetails` with HTTP 400.
+
+## Infrastructure layer
+
+`CobranzaDigital.Infrastructure` contains the concrete implementations registered in `DependencyInjection.cs`:
+
+```
+CobranzaDigital.Infrastructure/
+├── Auditing/          # AuditLogger (writes to CobranzaDigitalDbContext)
+├── Identity/          # ApplicationUser, ApplicationRole, IdentityService, JwtTokenService
+├── Migrations/        # EF Core migration files
+├── Options/           # DatabaseOptions, PosOptions
+├── Persistence/       # CobranzaDigitalDbContext, entity configurations, PosBootstrapper
+└── Services/          # Business service implementations
+```
+
+### Database
+
+EF Core 10 with SQL Server is used in production. Key configuration:
+
+```csharp DependencyInjection.cs
+options.UseSqlServer(connectionString, sqlOptions =>
+{
+    sqlOptions.EnableRetryOnFailure();
+    sqlOptions.MigrationsAssembly(typeof(CobranzaDigitalDbContext).Assembly.FullName);
+});
+```
+
+SQL authentication and Windows Integrated Security are handled via `NormalizeSqlServerAuthentication`, which ensures they are not set simultaneously.
+
+For integration tests, EF Core InMemory is used (`Microsoft.EntityFrameworkCore.InMemory` v10.0.1).
+
+### Identity
+
+ASP.NET Core Identity is configured with the following password policy:
+
+```csharp
+options.Password.RequiredLength = 8;
+options.Password.RequireDigit = true;
+options.Password.RequireLowercase = true;
+options.Password.RequireUppercase = true;
+options.Password.RequireNonAlphanumeric = false;
+
+options.Lockout.AllowedForNewUsers = true;
+options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(5);
+options.Lockout.MaxFailedAccessAttempts = 5;
+
+options.User.RequireUniqueEmail = true;
+```
+
+### Audit logging
+
+`AuditLogger` writes structured audit entries to the `AuditLogs` table:
+
+```csharp AuditLogger.cs
+public async Task LogAsync(AuditEntry entry, CancellationToken ct = default)
+{
+    var auditLog = new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        Action = entry.Action,
+        Actor = entry.Actor ?? entry.UserId?.ToString() ?? "system",
+        Metadata = entry.Metadata,
+        OccurredAt = DateTimeOffset.UtcNow,
+        OccurredAtUtc = entry.OccurredAtUtc ?? DateTime.UtcNow,
+        UserId = entry.UserId,
+        EntityType = entry.EntityType,
+        EntityId = entry.EntityId,
+        BeforeJson = Serialize(entry.Before),
+        AfterJson = Serialize(entry.After),
+        CorrelationId = entry.CorrelationId,
+        Source = entry.Source,
+        Notes = entry.Notes
+    };
+    // ...
+}
+```
+
+If a database transaction is already in flight, `SaveChangesAsync` is deferred to the caller. Write failures are logged as warnings and never throw, so audit failures don't break request processing.
+
+## API layer
+
+### API versioning
+
+Versioning is configured via `Asp.Versioning.Mvc` (v8.1.0). The extension method `AddApiVersioningWithExplorer()` (in `ApiVersioningExtensions.cs`) registers versioned API explorer for Swagger integration. All endpoints are versioned as `v1` by default.
+
+### Authorization policies
+
+Policies are defined in `AuthorizationPolicies.cs` and registered in `Program.cs`:
+
+| Policy | Required roles / claims |
+|---|---|
+| `UserAdminAccess` | `AdminStore`, `TenantAdmin`, `SuperAdmin` |
+| `PosAdmin` | `AdminStore`, `Manager`, `TenantAdmin`, `SuperAdmin` |
+| `PosOperator` | `AdminStore`, `Cashier`, `Manager`, `TenantAdmin`, `SuperAdmin` |
+| `PosReportViewer` | `AdminStore`, `Manager`, `TenantAdmin`, `SuperAdmin` |
+| `PlatformOnly` | `SuperAdmin` |
+| `TenantScoped` | Must have `tenantId` claim |
+| `TenantOrPlatform` | `tenantId` claim **or** `SuperAdmin` role |
+| `RequireScope` | `scope` claim with value `cobranza.read` |
+
+### Middleware stack
+
+The pipeline is assembled in this order in `Program.cs`:
+
+1. **Swagger** — enabled in Development or when `Swagger:Enabled = true`; otherwise HSTS is applied
+2. **CorrelationId** — generates / propagates `X-Correlation-Id` header
+3. **ExceptionHandling** — converts unhandled exceptions to `ProblemDetails` responses
+4. **Security headers** — sets `X-Content-Type-Options`, `Referrer-Policy`, `X-Frame-Options`, `Permissions-Policy`, `Content-Security-Policy`
+5. **HTTPS redirection** — skipped in `Testing` environment
+6. **CORS** — `DefaultCors` policy with origin allowlist from `Cors:AllowedOrigins`
+7. **Rate limiting** — fixed-window per IP; skipped in `Testing` environment
+8. **Routing**
+9. **Authentication** — JWT Bearer
+10. **Request logging**
+11. **Authorization**
+
+### Problem Details
+
+All error responses conform to RFC 9457. The `traceId` and `correlationId` are injected into every `ProblemDetails` extension:
+
+```csharp Program.cs
+options.CustomizeProblemDetails = context =>
+{
+    context.ProblemDetails.Extensions["traceId"] =
+        Activity.Current?.Id ?? context.HttpContext.TraceIdentifier;
+    if (context.HttpContext.Items.TryGetValue(CorrelationIdMiddleware.ItemKey, out var value)
+        && value is string correlationId)
+    {
+        context.ProblemDetails.Extensions["correlationId"] = correlationId;
+    }
+};
+```
+
+### Health checks
+
+Three endpoints are registered:
+
+| Endpoint | Tags | Checks |
+|---|---|---|
+| `/health` | — | All checks |
+| `/health/live` | `live` | Self (always healthy) |
+| `/health/ready` | `ready`, `db`, `sql` | `CobranzaDigitalDbContext` connectivity |
+
+### Feature flags
+
+`FeatureFlagControllerFeatureProvider` conditionally registers controllers based on configuration. Feature flags in `appsettings.json`:
+
+```json appsettings.json
+{
+  "Features": {
+    "UserAdmin": true
+  },
+  "inventory.v2.enabled": false
+}
+```
+
+## Configuration reference
+
+```json appsettings.json (all sections)
+{
+  "ConnectionStrings": {
+    "DefaultConnection": "<SQL Server connection string>"
+  },
+  "DatabaseOptions": {
+    "ConnectionStringName": "DefaultConnection",
+    "EnableSensitiveDataLogging": false
+  },
+  "DataProtection": {
+    "KeysPath": "/var/www/cobranzadigital/api/keys",
+    "ApplicationName": "CobranzaDigital"
+  },
+  "Jwt": {
+    "Issuer": "CobranzaDigital",
+    "Audience": "CobranzaDigital.Api",
+    "SigningKey": "<min 32 chars>",
+    "AccessTokenMinutes": 15,
+    "RefreshTokenDays": 7
+  },
+  "Cors": {
+    "AllowedOrigins": []
+  },
+  "RateLimiting": {
+    "PermitLimit": 100,
+    "WindowSeconds": 60,
+    "QueueLimit": 0
+  },
+  "Swagger": {
+    "Enabled": true
+  },
+  "Pos": {
+    "RequireOpenShiftForSales": true
+  },
+  "Features": {
+    "UserAdmin": true
+  },
+  "inventory.v2.enabled": false
+}
+```
+
+## Build configuration
+
+`Directory.Build.props` applies to all projects in the solution:
+
+```xml Directory.Build.props
+<PropertyGroup>
+  <ImplicitUsings>enable</ImplicitUsings>
+  <Nullable>enable</Nullable>
+  <AnalysisLevel>latest</AnalysisLevel>
+  <AnalysisMode>Recommended</AnalysisMode>
+  <EnableNETAnalyzers>true</EnableNETAnalyzers>
+  <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+  <LangVersion>latest</LangVersion>
+  <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  <TreatWarningsAsErrors Condition="'$(CI)' == 'true'">true</TreatWarningsAsErrors>
+</PropertyGroup>
+```
+
+<Note>
+`TreatWarningsAsErrors` is enabled only in CI (when the `CI` environment variable is `true`). This keeps local builds permissive while enforcing strict quality in pull requests.
+</Note>
+
+## Central package management
+
+NuGet package versions are managed centrally in `Directory.Packages.props`. Key packages:
+
+| Package | Version |
+|---|---|
+| `Microsoft.EntityFrameworkCore.SqlServer` | 10.0.1 |
+| `Microsoft.AspNetCore.Authentication.JwtBearer` | 10.0.1 |
+| `Microsoft.AspNetCore.Identity.EntityFrameworkCore` | 10.0.1 |
+| `Asp.Versioning.Mvc` | 8.1.0 |
+| `FluentValidation` | 12.0.0 |
+| `Swashbuckle.AspNetCore` | 10.1.0 |
+| `xunit` | 2.9.2 |
+| `Microsoft.AspNetCore.Mvc.Testing` | 10.0.1 |

@@ -1,0 +1,221 @@
+---
+title: POS Shifts
+description: How CobranzaDigital manages cashier shifts — opening, closing, denomination counting, cash reconciliation, and audit trail.
+---
+
+## Overview
+
+A **shift** (`PosShift`) represents a single open/close cycle of a cash register for one cashier at one store. All sales recorded while a shift is open are linked to it via `Sale.ShiftId`. Shifts power the cash-reconciliation workflow: the cashier declares an opening cash amount, registers sales throughout the day, and at close counts denominations to verify actual cash matches expected.
+
+**API base:** `api/v1/pos/shifts`  
+**Requires:** `TenantOrPlatform` + `PosOperator` policies  
+**Angular service:** `PosShiftApiService` (`pos-shift-api.service.ts`)
+
+---
+
+## Shift Lifecycle
+
+```
+[No shift] ──▶ Open ──▶ Active (sales being recorded) ──▶ Closed
+```
+
+A shift can only be closed once — re-closing the same `shiftId` is idempotent via `clientOperationId`.
+
+---
+
+## Opening a Shift
+
+**Endpoint:** `POST /api/v1/pos/shifts/open`
+
+The cashier declares the cash already in the drawer before any sales begin.
+
+<CodeGroup>
+```json Request
+{
+  "startingCashAmount": 500.00,
+  "notes": "Apertura turno matutino",
+  "storeId": "d4e8f123-0000-0000-0000-000000000001"
+}
+```
+
+```json Response (PosShiftDto)
+{
+  "id": "a9c1e2f3-0000-0000-0000-000000000001",
+  "openedAtUtc": "2026-03-01T14:00:00Z",
+  "openedByUserId": "usr-001",
+  "openedByEmail": "caja@tienda.mx",
+  "openingCashAmount": 500.00,
+  "closedAtUtc": null,
+  "closedByUserId": null,
+  "closedByEmail": null,
+  "closingCashAmount": null,
+  "openNotes": "Apertura turno matutino",
+  "closeNotes": null,
+  "storeId": "d4e8f123-0000-0000-0000-000000000001"
+}
+```
+</CodeGroup>
+
+In the Angular page (`PosCajaPage`), the open-shift form validates:
+- `startingCashAmount` ≥ 0 (required)
+- `notes` is optional free text
+
+If `posRequireOpenShift` is `true` and no shift exists when the app loads, the open-shift modal appears automatically.
+
+---
+
+## Checking the Current Shift
+
+**Endpoint:** `GET /api/v1/pos/shifts/current?storeId={optional}`
+
+Returns the currently open shift for the resolved store, or `204 No Content` when no shift is open. `PosShiftApiService.getCurrentShift()` normalizes the `204` to `null` for the Angular signal.
+
+---
+
+## Close Preview
+
+Before closing, the cashier fetches a preview to see the expected cash position.
+
+<Tabs>
+  <Tab title="GET (simple)">
+    **Endpoint:** `GET /api/v1/pos/shifts/close-preview?shiftId={guid}&storeId={optional}`
+
+    Returns expected cash without a counted denomination breakdown.
+  </Tab>
+  <Tab title="POST (with cash count)">
+    **Endpoint:** `POST /api/v1/pos/shifts/close-preview`
+
+    Accepts optional `cashCount` denominations so the preview can compute `countedCashAmount` and `difference` in real time as the cashier types counts.
+
+    ```json
+    {
+      "shiftId": "a9c1e2f3-0000-0000-0000-000000000001",
+      "cashCount": [
+        { "denominationValue": 500, "count": 2 },
+        { "denominationValue": 100, "count": 3 },
+        { "denominationValue": 50,  "count": 1 }
+      ]
+    }
+    ```
+  </Tab>
+</Tabs>
+
+**Close preview response (`ShiftClosePreviewDto`):**
+
+```json
+{
+  "shiftId": "a9c1e2f3-0000-0000-0000-000000000001",
+  "openedAtUtc": "2026-03-01T14:00:00Z",
+  "openingCashAmount": 500.00,
+  "salesCashTotal": 620.00,
+  "expectedCashAmount": 1120.00,
+  "countedCashAmount": 1100.00,
+  "difference": -20.00,
+  "breakdown": {
+    "cashAmount": 620.00,
+    "cardAmount": 180.00,
+    "transferAmount": 80.00,
+    "totalSalesCount": 12
+  }
+}
+```
+
+`expectedCashAmount = openingCashAmount + salesCashTotal`
+
+---
+
+## Closing a Shift
+
+**Endpoint:** `POST /api/v1/pos/shifts/close`
+
+<Steps>
+  <Step title="Cashier initiates close">
+    Tapping **Cerrar turno** in the UI calls `PosShiftApiService.closePreviewV2()` to load the preview with the initial denomination breakdown.
+  </Step>
+
+  <Step title="Denomination counting (arqueo)">
+    The cashier enters the count for each denomination. The Angular form uses a `FormArray` with controls for all denominations: `[1000, 500, 200, 100, 50, 20, 10, 5, 2, 1, 0.5]`. The UI recomputes `countedTotal` and `closeDifference` in real time from computed signals.
+  </Step>
+
+  <Step title="Difference reason (if applicable)">
+    If `Math.abs(closeDifference) > 0.009`, the form requires a `reason` field before submission. If the backend returns `400` without one, the UI surfaces: "El backend requiere motivo de diferencia para finalizar el cierre."
+  </Step>
+
+  <Step title="Submit close">
+    `POST /api/v1/pos/shifts/close` is sent with the counted denominations, optional `closeReason`, optional `closingNotes`, and a client-generated `clientOperationId` for idempotency.
+  </Step>
+</Steps>
+
+<CodeGroup>
+```json Close Request
+{
+  "shiftId": "a9c1e2f3-0000-0000-0000-000000000001",
+  "countedDenominations": [
+    { "denominationValue": 500, "count": 2 },
+    { "denominationValue": 100, "count": 3 },
+    { "denominationValue": 50,  "count": 1 }
+  ],
+  "closeReason": "Short — customer paid with large bill",
+  "closingNotes": "Faltaron $20",
+  "clientOperationId": "b1c2d3e4-0000-0000-0000-000000000002",
+  "storeId": "d4e8f123-0000-0000-0000-000000000001"
+}
+```
+
+```json Close Response (ClosePosShiftResultDto)
+{
+  "shiftId": "a9c1e2f3-0000-0000-0000-000000000001",
+  "openedAtUtc": "2026-03-01T14:00:00Z",
+  "closedAtUtc": "2026-03-01T22:05:00Z",
+  "openingCashAmount": 500.00,
+  "salesCashTotal": 620.00,
+  "expectedCashAmount": 1120.00,
+  "countedCashAmount": 1100.00,
+  "difference": -20.00,
+  "closeNotes": "Faltaron $20",
+  "closeReason": "Short — customer paid with large bill"
+}
+```
+</CodeGroup>
+
+---
+
+## PosShift Entity Fields
+
+The `PosShift` domain entity (defined in `PosSalesEntities.cs`) stores the full audit trail:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `OpenedAtUtc` | `DateTimeOffset` | UTC timestamp of shift open |
+| `OpenedByUserId` | `Guid` | User who opened the shift |
+| `OpenedByEmail` | `string?` | Email snapshot at open time |
+| `OpeningCashAmount` | `decimal` | Declared opening cash |
+| `ClosedAtUtc` | `DateTimeOffset?` | UTC timestamp of close (null if open) |
+| `ClosedByUserId` | `Guid?` | User who closed the shift |
+| `ClosedByEmail` | `string?` | Email snapshot at close time |
+| `ClosingCashAmount` | `decimal?` | Counted cash at close |
+| `ExpectedCashAmount` | `decimal?` | Opening + cash sales total |
+| `CashDifference` | `decimal?` | Counted minus expected |
+| `DenominationsJson` | `string?` | JSON array of counted denominations |
+| `OpenNotes` / `CloseNotes` | `string?` | Free-text notes |
+| `OpenOperationId` / `CloseOperationId` | `Guid?` | Idempotency keys |
+| `CloseReason` | `string?` | Explanation when a cash difference exists |
+| `StoreId` | `Guid` | Store this shift belongs to |
+| `TenantId` | `Guid` | Tenant isolation |
+
+---
+
+## Multi-Store Shifts
+
+When `PosSettings.MultiStoreEnabled = true` and the tenant has more than one store, the `storeId` query/body parameter selects which store's shift to act on. The `StoreContextService` in the Angular app resolves the active store ID and appends it automatically to all shift API calls. Each store has its own independent current shift.
+
+---
+
+## Shift Reports
+
+Shift history and audit data are available through the reports API:
+
+- **`GET /api/v1/pos/reports/shifts/summary`** — list of closed shifts with sales totals, payment breakdown, and cash difference per shift.
+- **`GET /api/v1/pos/reports/control/cash-differences`** — per-shift and daily aggregated cash difference report for auditing.
+
+See [Reports](/features/reports) for full details.

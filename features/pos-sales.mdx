@@ -1,0 +1,208 @@
+---
+title: POS Sales
+description: How the CobranzaDigital POS processes sales, payments, voids, and loyalty points from product selection through receipt.
+---
+
+## Overview
+
+The POS sales flow is the core transaction engine of CobranzaDigital. A cashier selects products from the catalog, configures any customizations or extras, chooses a payment method, and submits the sale. The backend records a `Sale` entity with immutable product snapshots, computes totals server-side, and optionally awards loyalty points.
+
+**API route:** `POST /api/v1/pos/sales`  
+**Requires:** `TenantOrPlatform` + `PosOperator` policies  
+**Angular page:** `PosCajaPage` (`pos-caja.page.ts`)
+
+---
+
+## Sales Flow
+
+<Steps>
+  <Step title="Load catalog snapshot">
+    On page load, `PosCajaPage` calls `PosCatalogSnapshotService.getSnapshot()`. The snapshot contains all active categories, products, option sets, selection groups, extras, and included items. It is cached in `localStorage` per store and validated with an `ETag` / `If-None-Match` header pair.
+  </Step>
+
+  <Step title="Select product">
+    The cashier picks a product from the grid. If the product has a `customizationSchemaId`, the customization modal opens automatically. Products with `isAvailable=false` are shown as disabled with an **Agotado** badge and block interaction.
+  </Step>
+
+  <Step title="Configure customizations and extras">
+    Inside the customization modal the cashier selects options from each `SelectionGroup` (e.g., milk type, size) and adds any `Extra` items (e.g., extra shot, whipped cream). Each selection carries a `groupKey` and `optionItemId`; each extra carries an `extraId` and `quantity`.
+  </Step>
+
+  <Step title="Add to cart">
+    The item is added to the cart as a `CartItem`. Quantity can be adjusted with `+` / `−` buttons. Wholesale pricing is re-quoted on every quantity change via `WholesalePricingService`.
+  </Step>
+
+  <Step title="Open payment modal">
+    The cashier taps **Cobrar**. The UI calls `canCheckoutTicket()`, which:
+    1. Re-validates pricing via `POST /api/v1/pos/pricing/quote`.
+    2. Validates inventory availability via `POST /api/v1/pos/inventory/validate-availability`.
+
+    If any inventory line is insufficient, the cashier can adjust quantities before proceeding.
+  </Step>
+
+  <Step title="Choose payment method">
+    The cashier selects one or more payments from the `PaymentMethod` enum. A `reference` is required for `Card` and `Transfer` payments.
+  </Step>
+
+  <Step title="Submit sale">
+    `PosSalesApiService.createSale()` sends `POST /api/v1/pos/sales` with an `X-Correlation-Id` header. The request includes a client-generated `clientSaleId` (UUID) for idempotency — if the same ID is submitted twice, the backend returns the already-created sale instead of creating a duplicate.
+  </Step>
+
+  <Step title="Receive confirmation">
+    On success the API returns `{ saleId, folio, occurredAtUtc, total }`. The folio (e.g., `POS-20260212160400123`) is displayed as the receipt identifier. The cart is cleared and the shift's sales list is updated.
+  </Step>
+</Steps>
+
+---
+
+## Payment Methods
+
+Payment methods are defined in the `PaymentMethod` enum in `PosSalesEntities.cs`:
+
+| Value | Integer | Notes |
+|-------|---------|-------|
+| `Cash` | `0` | `reference` field is optional and ignored on persistence |
+| `Card` | `1` | `reference` is required (e.g., last 4 digits or approval code) |
+| `Transfer` | `2` | `reference` is required (e.g., transaction ID) |
+
+A single sale can carry multiple `Payment` records — for example, a split payment of part cash and part card.
+
+---
+
+## Create Sale Request
+
+<CodeGroup>
+```json Request
+{
+  "clientSaleId": "7f2f0eab-2ff7-4e3e-8f3a-07b24fd7c90b",
+  "occurredAtUtc": null,
+  "storeId": "d4e8f123-0000-0000-0000-000000000001",
+  "items": [
+    {
+      "productId": "8e76bdf9-f73f-4fb4-bcb0-00ea59fd4699",
+      "quantity": 2,
+      "selections": [
+        { "groupKey": "milk", "optionItemId": "5ea79f6e-18d8-4ef2-a0d4-b9b40fd81f07" }
+      ],
+      "extras": [
+        { "extraId": "8fb81ea7-f6d8-4563-9844-5bc96e74cb53", "quantity": 2 }
+      ],
+      "pricingSnapshot": {
+        "baseUnitPrice": 80.00,
+        "appliedUnitPrice": 80.00,
+        "wholesale": { "isApplied": false, "minQty": null, "discountType": null, "discountValue": null, "source": null },
+        "pricingCalculatedAtUtc": "2026-02-12T16:03:55Z"
+      }
+    }
+  ],
+  "payments": [
+    { "method": "Cash", "amount": 170.00, "reference": null }
+  ]
+}
+```
+
+```json Response
+{
+  "saleId": "4b7b5056-f9f5-4da0-b95a-26aa57030f08",
+  "folio": "POS-20260212160400123",
+  "occurredAtUtc": "2026-02-12T16:04:00+00:00",
+  "total": 170.00
+}
+```
+</CodeGroup>
+
+<Note>
+  `occurredAtUtc` is optional. When omitted, the backend assigns `DateTimeOffset.UtcNow` as the authoritative timestamp. Totals (`Subtotal`, `Total`) are always computed server-side — client-supplied amounts are not trusted.
+</Note>
+
+---
+
+## Product Snapshots
+
+At the moment of sale, the backend captures immutable snapshots of all catalog data into the `SaleItem`, `SaleItemSelection`, and `SaleItemExtra` records. This means historic sales remain accurate even after catalog updates.
+
+| Entity | Snapshot fields |
+|--------|----------------|
+| `SaleItem` | `ProductNameSnapshot`, `ProductExternalCode`, `UnitPriceSnapshot`, `LineTotal`, `Quantity` |
+| `SaleItemSelection` | `GroupKey`, `OptionItemNameSnapshot`, `PriceDeltaSnapshot` |
+| `SaleItemExtra` | `ExtraNameSnapshot`, `UnitPriceSnapshot`, `Quantity`, `LineTotal` |
+
+---
+
+## Sale Lifecycle
+
+```
+Completed ──── void ──▶ Void
+```
+
+The `SaleStatus` enum has two states:
+
+- **`Completed` (0):** The sale was registered successfully.
+- **`Void` (1):** The sale was cancelled. Void sales are excluded from all revenue totals in reports.
+
+### Voiding a Sale
+
+**Endpoint:** `POST /api/v1/pos/sales/{saleId}/void`
+
+A void requires a structured reason:
+
+| `VoidReasonCode` | Integer | When to use |
+|-----------------|---------|-------------|
+| `CustomerRequest` | `0` | Customer asked to cancel |
+| `CashierError` | `1` | Cashier entered wrong product or amount |
+| `FraudSuspected` | `2` | Suspicious transaction |
+| `DuplicateCharge` | `3` | Same sale registered twice |
+| `Other` | `4` | Free-form reason in `voidNote` |
+
+<CodeGroup>
+```json Void Request
+{
+  "reasonCode": "CashierError",
+  "reasonText": "Wrong product scanned",
+  "note": "Customer wanted Latte not Americano",
+  "clientVoidId": "a1b2c3d4-0000-0000-0000-000000000001"
+}
+```
+
+```json Void Response
+{
+  "saleId": "4b7b5056-f9f5-4da0-b95a-26aa57030f08",
+  "status": "Void",
+  "voidedAtUtc": "2026-02-12T16:15:00+00:00"
+}
+```
+</CodeGroup>
+
+<Warning>
+  Only a `Manager`, `AdminStore`, or the cashier who owns the **current open shift** can void a sale. Unauthorized attempts return `403 Forbidden` with `code: FORBIDDEN_VOID`. The Angular page surfaces this as a user-friendly error without exposing the HTTP status.
+</Warning>
+
+Voiding a sale automatically reverses any `IsInventoryTracked` product and extra consumption through a `VoidReversal` inventory movement, keeping stock counts accurate.
+
+---
+
+## Loyalty Points
+
+When a loyalty program is active for the tenant, the sale response may include loyalty data stored on the `Sale` entity:
+
+- `LoyaltyPointsAwarded` — integer points earned for this transaction
+- `LoyaltyEarnTransactionId` — reference to the loyalty platform earn record
+
+---
+
+## Shift Association
+
+Every sale is linked to the shift that was open at time of creation via `Sale.ShiftId`. If no shift is open and the environment variable `posRequireOpenShift` is `true`, the POS blocks checkout and prompts the cashier to open a shift first. The shift context also powers the close-preview cash reconciliation.
+
+---
+
+## Error Handling
+
+| HTTP Status | Scenario | UI Behavior |
+|-------------|----------|-------------|
+| `400` | Invalid payload (unknown product ID, missing required field) | "Solicitud inválida" banner |
+| `409` — `OutOfStock` | `IsInventoryTracked` product with `onHand ≤ 0` | Shows item name and available qty; blocks payment |
+| `409` — `ItemUnavailable` | Product/extra/option marked unavailable | Shows item name; offers **Actualizar catálogo** CTA |
+| `409` — no open shift | `posRequireOpenShift=true` and shift is closed | Opens the open-shift modal |
+| `409` — duplicate | Same `clientSaleId` submitted twice | "Esta venta ya fue registrada" |
+| `0` (network) | Offline or timeout | "Error de red. Puedes reintentar…" — same `clientSaleId` reused |
