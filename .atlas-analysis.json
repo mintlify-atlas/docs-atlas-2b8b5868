@@ -1,0 +1,125 @@
+{
+  "projectType": "saas",
+  "projectName": "CobranzaDigital",
+  "projectDescription": "A multi-tenant SaaS Point-of-Sale (POS) platform built with Angular and .NET for managing sales, shifts, catalog, inventory, and reporting across multiple stores.",
+  "theme": "linden",
+  "primaryColor": "#1E6E4F",
+  "lightColor": "#D4EDDA",
+  "darkColor": "#0D3D2A",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "architecture"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/multi-tenancy",
+              "concepts/roles-and-permissions",
+              "concepts/authentication"
+            ]
+          },
+          {
+            "group": "Features",
+            "pages": [
+              "features/pos-sales",
+              "features/pos-shifts",
+              "features/catalog",
+              "features/inventory",
+              "features/reports",
+              "features/platform-management"
+            ]
+          },
+          {
+            "group": "Development",
+            "pages": [
+              "development/setup",
+              "development/frontend",
+              "development/backend",
+              "development/testing"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Authentication",
+            "pages": [
+              "api/auth/overview",
+              "api/auth/register",
+              "api/auth/login",
+              "api/auth/refresh"
+            ]
+          },
+          {
+            "group": "POS",
+            "pages": [
+              "api/pos/sales",
+              "api/pos/shifts",
+              "api/pos/catalog",
+              "api/pos/inventory",
+              "api/pos/pricing",
+              "api/pos/reports"
+            ]
+          },
+          {
+            "group": "Platform",
+            "pages": [
+              "api/platform/overview",
+              "api/platform/stores",
+              "api/platform/dashboard"
+            ]
+          },
+          {
+            "group": "Admin",
+            "pages": [
+              "api/admin/users",
+              "api/admin/roles"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Multi-tenant POS system with per-store isolation",
+    "JWT-based authentication with role-based access control",
+    "Configurable product catalog with options, extras, and pricing",
+    "POS shift management with opening/closing cash reconciliation",
+    "Sales recording with payment methods (cash, card, transfer)",
+    "Inventory tracking per store with optimistic concurrency",
+    "Operational reports and sales analytics",
+    "Platform-level management of tenants and stores",
+    "Comprehensive audit logging with before/after change tracking",
+    "Angular 21 frontend with signals and lazy-loaded feature routes"
+  ],
+  "publicApiSurface": [
+    "POST /api/v1/auth/register",
+    "POST /api/v1/auth/login",
+    "POST /api/v1/auth/refresh",
+    "POST /api/v1/pos/sales",
+    "POST /api/v1/pos/sales/{saleId}/void",
+    "GET /api/v1/pos/shifts/current",
+    "POST /api/v1/pos/shifts/open",
+    "GET /api/v1/pos/shifts/close-preview",
+    "POST /api/v1/pos/shifts/close",
+    "GET /api/v1/pos/catalog",
+    "GET /api/v1/pos/inventory",
+    "GET /api/v1/pos/reports",
+    "GET /api/v1/platform/tenants/{tenantId}/stores",
+    "PUT /api/v1/platform/stores/{storeId}",
+    "PUT /api/v1/platform/tenants/{tenantId}/default-store",
+    "GET /api/v1/admin/users",
+    "GET /api/v1/admin/roles"
+  ]
+}
