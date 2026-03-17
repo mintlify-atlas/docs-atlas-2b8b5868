@@ -107,7 +107,7 @@ curl -X POST https://api.cobranzadigital.com/api/v1/admin/users \
 
 ```json Response
 {
-  "id": "auth0|abc123xyz",
+  "id": "550e8400-e29b-41d4-a716-446655440000",
   "email": "maria.lopez@restaurantenorte.mx",
   "userName": "maria.lopez",
   "roles": ["AdminStore"],
@@ -187,7 +187,7 @@ curl -X GET "https://api.cobranzadigital.com/api/v1/admin/users?search=lopez&pag
   "total": 1,
   "items": [
     {
-      "id": "auth0|abc123xyz",
+      "id": "550e8400-e29b-41d4-a716-446655440000",
       "email": "maria.lopez@restaurantenorte.mx",
       "userName": "maria.lopez",
       "roles": ["AdminStore"],
@@ -212,7 +212,7 @@ GET /api/v1/admin/users/{id}
 ### Path parameters
 
 <ParamField path="id" type="string" required>
-  The identity provider user ID (e.g. `auth0|abc123xyz`).
+  The identity provider user ID (e.g. `550e8400-e29b-41d4-a716-446655440000`).
 </ParamField>
 
 ### Response `200 OK`
@@ -238,7 +238,7 @@ curl -X GET https://api.cobranzadigital.com/api/v1/admin/users/auth0%7Cabc123xyz
 
 ```json Response
 {
-  "id": "auth0|abc123xyz",
+  "id": "550e8400-e29b-41d4-a716-446655440000",
   "email": "maria.lopez@restaurantenorte.mx",
   "userName": "maria.lopez",
   "roles": ["AdminStore"],
@@ -311,7 +311,7 @@ curl -X PUT https://api.cobranzadigital.com/api/v1/admin/users/auth0%7Cabc123xyz
 
 ```json Response
 {
-  "id": "auth0|abc123xyz",
+  "id": "550e8400-e29b-41d4-a716-446655440000",
   "email": "maria.lopez@restaurantenorte.mx",
   "userName": "maria.lopez.norte",
   "roles": ["AdminStore"],
@@ -372,16 +372,16 @@ curl -X PUT https://api.cobranzadigital.com/api/v1/admin/users/auth0%7Cabc123xyz
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "roles": ["PosOperator"]
+    "roles": ["Cashier"]
   }'
 ```
 
 ```json Response
 {
-  "id": "auth0|abc123xyz",
+  "id": "550e8400-e29b-41d4-a716-446655440000",
   "email": "maria.lopez@restaurantenorte.mx",
   "userName": "maria.lopez.norte",
-  "roles": ["PosOperator"],
+  "roles": ["Cashier"],
   "isLockedOut": false,
   "lockoutEnd": null,
   "tenantId": "11111111-0000-0000-0000-000000000001",
@@ -444,10 +444,10 @@ curl -X POST https://api.cobranzadigital.com/api/v1/admin/users/auth0%7Cabc123xy
 
 ```json Response
 {
-  "id": "auth0|abc123xyz",
+  "id": "550e8400-e29b-41d4-a716-446655440000",
   "email": "maria.lopez@restaurantenorte.mx",
   "userName": "maria.lopez.norte",
-  "roles": ["PosOperator"],
+  "roles": ["Cashier"],
   "isLockedOut": true,
   "lockoutEnd": null,
   "tenantId": "11111111-0000-0000-0000-000000000001",
@@ -510,10 +510,10 @@ curl -X POST https://api.cobranzadigital.com/api/v1/admin/users/auth0%7Cabc123xy
 
 ```json Response
 {
-  "id": "auth0|abc123xyz",
+  "id": "550e8400-e29b-41d4-a716-446655440000",
   "email": "maria.lopez@restaurantenorte.mx",
   "userName": "maria.lopez.norte",
-  "roles": ["PosOperator"],
+  "roles": ["Cashier"],
   "tenantId": "11111111-0000-0000-0000-000000000001",
   "storeId": "22222222-0000-0000-0000-000000000002",
   "message": "Temporary password set successfully."

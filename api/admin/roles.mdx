@@ -22,14 +22,15 @@ CobranzaDigital ships with a set of predefined roles:
 | Role | Scope | Description |
 |------|-------|-------------|
 | `SuperAdmin` | Platform | Full access to all platform and tenant APIs. Required for `PlatformOnly` policy. |
-| `PosAdmin` | Tenant | Administrative access within a tenant (catalog, settings, reports). |
+| `TenantAdmin` | Tenant | Administrative access within a tenant (catalog, settings, reports, user management). |
 | `AdminStore` | Store | Store-level administrator (users, shifts, inventory). |
-| `PosOperator` | Store | Day-to-day POS cashier — can create and void sales. |
-| `PosReportViewer` | Tenant / Store | Read-only access to sales and inventory reports. |
+| `Manager` | Store | Store manager — can supervise POS operations. |
+| `Cashier` | Store | Day-to-day POS cashier — can create and void sales. |
 
 <Note>
-  You can also create custom roles via the `POST /api/v1/admin/roles` endpoint.
-  Assign custom roles to users the same way as built-in roles.
+  Authorization policies (`PosOperator`, `PosReportViewer`, `PosAdmin`) are derived from
+  the user's assigned roles. Policies are configured in `AuthorizationPolicies.cs` and
+  registered in `Program.cs`. You can also create custom roles via `POST /api/v1/admin/roles`.
 </Note>
 
 ---
@@ -68,11 +69,11 @@ curl -X GET https://api.cobranzadigital.com/api/v1/admin/roles \
 
 ```json Response
 [
-  { "name": "SuperAdmin" },
-  { "name": "PosAdmin" },
   { "name": "AdminStore" },
-  { "name": "PosOperator" },
-  { "name": "PosReportViewer" },
+  { "name": "Cashier" },
+  { "name": "Manager" },
+  { "name": "SuperAdmin" },
+  { "name": "TenantAdmin" },
   { "name": "CustomAuditRole" }
 ]
 ```

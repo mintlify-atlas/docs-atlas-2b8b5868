@@ -24,8 +24,8 @@ The backend pins the .NET SDK version in `backend/global.json`. Running `dotnet 
   <Step title="Clone and enter the project">
     <CodeGroup>
       ```bash git
-      git clone https://github.com/your-org/cobranza-digital.git
-      cd cobranza-digital
+      git clone https://github.com/romanrfhack/crepas-front.git
+      cd crepas-front
       ```
     </CodeGroup>
   </Step>
@@ -79,7 +79,7 @@ The backend pins the .NET SDK version in `backend/global.json`. Running `dotnet 
       ```
     </CodeGroup>
 
-    The API starts on `https://localhost:5001` by default. Swagger UI is available at `https://localhost:5001/swagger` when `Swagger:Enabled` is `true`.
+    The API starts on `https://localhost:7146` by default. Swagger UI is available at `https://localhost:7146/swagger` when `Swagger:Enabled` is `true`.
 
     Health endpoints:
     - `GET /health` — overall status
@@ -99,7 +99,7 @@ The backend pins the .NET SDK version in `backend/global.json`. Running `dotnet 
       ```
     </CodeGroup>
 
-    The Angular dev server proxies `/api` requests to the backend. Confirm your `proxy.conf.json` (or equivalent) targets `https://localhost:5001`.
+    The Angular dev server proxies `/api` and `/swagger` requests to the backend via `proxy.conf.json`, which targets `https://localhost:7146` by default.
   </Step>
 
   <Step title="Install frontend dependencies and start the dev server">
